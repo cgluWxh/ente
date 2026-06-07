@@ -88,6 +88,7 @@ jobs:
                   flutter build apk \
                     --debug \
                     --flavor independent \
+                    --target-platform android-arm64 \
                     --dart-define=endpoint="${CUSTOM_ENDPOINT}" \
                     --dart-define=cronetHttpNoPlay=true
                   cp build/app/outputs/flutter-apk/app-independent-debug.apk artifacts/ente-photos-custom-debug.apk
@@ -98,7 +99,7 @@ jobs:
                   flutter build apk \
                     --release \
                     --flavor independent \
-                    --target-platform android-arm,android-arm64 \
+                    --target-platform android-arm64 \
                     --dart-define=endpoint="${CUSTOM_ENDPOINT}" \
                     --dart-define=cronetHttpNoPlay=true
                   cp build/app/outputs/flutter-apk/app-independent-release.apk artifacts/ente-photos-custom-release.apk
