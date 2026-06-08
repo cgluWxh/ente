@@ -108,6 +108,14 @@ jobs:
                       exit 1
                   fi
 
+            - name: Prepare unsigned Windows builder config
+              if: (env.TARGET == 'all' || env.TARGET == matrix.name) && matrix.platform == 'win'
+              shell: bash
+              run: |
+                  set -euo pipefail
+
+                  node -e 'const fs=require("fs"); const source="electron-builder.yml"; const target="electron-builder-custom-win.yml"; const yml=fs.readFileSync(source,"utf8").replace(/    azureSignOptions:\r?\n(?:        .+\r?\n)+/, "    azureSignOptions: null\n"); fs.writeFileSync(target,yml);'
+
             - name: Package desktop app
               if: env.TARGET == 'all' || env.TARGET == matrix.name
               shell: bash
@@ -117,7 +125,7 @@ jobs:
                   if [ "${RUNNER_OS}" = "macOS" ]; then
                       npm exec -- electron-builder --mac --arm64 --publish never -c.mac.identity=null -c.mac.target=default
                   elif [ "${RUNNER_OS}" = "Windows" ]; then
-                      npm exec -- electron-builder --win --x64 --publish never -c.win.azureSignOptions=null
+                      npm exec -- electron-builder --win --x64 --publish never --config electron-builder-custom-win.yml
                   else
                       echo "Unsupported runner OS: ${RUNNER_OS}"
                       exit 1
