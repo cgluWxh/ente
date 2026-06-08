@@ -117,7 +117,7 @@ jobs:
                   if [ "${RUNNER_OS}" = "macOS" ]; then
                       npm exec -- electron-builder --mac --arm64 --publish never -c.mac.identity=null -c.mac.target=default
                   elif [ "${RUNNER_OS}" = "Windows" ]; then
-                      npm exec -- electron-builder --win --x64 --publish never
+                      npm exec -- electron-builder --win --x64 --publish never -c.win.azureSignOptions=null
                   else
                       echo "Unsupported runner OS: ${RUNNER_OS}"
                       exit 1
