@@ -115,7 +115,7 @@ jobs:
                   set -euo pipefail
 
                   if [ "${RUNNER_OS}" = "macOS" ]; then
-                      npm exec -- electron-builder --mac --arm64 --publish never -c.mac.identity=null
+                      npm exec -- electron-builder --mac --arm64 --publish never -c.mac.identity=null -c.mac.target=default
                   elif [ "${RUNNER_OS}" = "Windows" ]; then
                       npm exec -- electron-builder --win --x64 --publish never
                   else
