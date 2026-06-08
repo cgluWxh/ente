@@ -1,0 +1,148 @@
+name: "Build Photos Desktop Custom"
+
+on:
+    push:
+        paths:
+            - ".github/workflows/photos-desktop-custom-build.yml"
+            - "desktop/**"
+            - "web/apps/photos/**"
+            - "web/packages/**"
+            - "web/package-lock.json"
+            - "web/package.json"
+    workflow_dispatch:
+        inputs:
+            endpoint:
+                description: "API endpoint to compile into the desktop app"
+                required: true
+                default: "https://ente.831.moe"
+                type: string
+            target:
+                description: "Desktop target to build"
+                required: true
+                default: "all"
+                type: choice
+                options:
+                    - all
+                    - mac-arm64
+                    - win-x64
+
+env:
+    CUSTOM_ENDPOINT: ${{ github.event.inputs.endpoint || 'https://ente.831.moe' }}
+    TARGET: ${{ github.event.inputs.target || 'all' }}
+
+permissions:
+    contents: read
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    build-desktop:
+        name: Build ${{ matrix.name }}
+        runs-on: ${{ matrix.os }}
+
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - name: mac-arm64
+                      os: macos-latest
+                      platform: mac
+                      arch: arm64
+                    - name: win-x64
+                      os: windows-latest
+                      platform: win
+                      arch: x64
+
+        defaults:
+            run:
+                working-directory: desktop
+
+        steps:
+            - name: Checkout
+              if: env.TARGET == 'all' || env.TARGET == matrix.name
+              uses: actions/checkout@v6
+
+            - name: Setup node
+              if: env.TARGET == 'all' || env.TARGET == matrix.name
+              uses: actions/setup-node@v6
+              with:
+                  node-version: 24
+                  cache: "npm"
+                  cache-dependency-path: |
+                      desktop/package-lock.json
+                      web/package-lock.json
+
+            - name: Install dependencies
+              if: env.TARGET == 'all' || env.TARGET == matrix.name
+              run: npm ci
+
+            - name: Install arm64 ffmpeg binary for macOS
+              if: (env.TARGET == 'all' || env.TARGET == matrix.name) && matrix.platform == 'mac'
+              run: |
+                  rm -f node_modules/ffmpeg-static/ffmpeg
+                  npm_config_arch=arm64 node node_modules/ffmpeg-static/install.js
+                  file node_modules/ffmpeg-static/ffmpeg
+
+            - name: Build renderer and main process
+              if: env.TARGET == 'all' || env.TARGET == matrix.name
+              run: npm run build:ci
+              env:
+                  NEXT_PUBLIC_ENTE_ENDPOINT: ${{ env.CUSTOM_ENDPOINT }}
+
+            - name: Archive renderer export
+              if: env.TARGET == 'all' || env.TARGET == matrix.name
+              shell: bash
+              run: |
+                  set -euo pipefail
+
+                  mkdir -p artifacts
+
+                  if [ "${RUNNER_OS}" = "macOS" ]; then
+                      ditto -c -k --keepParent out "artifacts/photos-out-${{ matrix.name }}.zip"
+                  elif [ "${RUNNER_OS}" = "Windows" ]; then
+                      powershell.exe -NoProfile -Command "Compress-Archive -Path out -DestinationPath artifacts/photos-out-${{ matrix.name }}.zip -Force"
+                  else
+                      echo "Unsupported runner OS: ${RUNNER_OS}"
+                      exit 1
+                  fi
+
+            - name: Package desktop app
+              if: env.TARGET == 'all' || env.TARGET == matrix.name
+              shell: bash
+              run: |
+                  set -euo pipefail
+
+                  if [ "${RUNNER_OS}" = "macOS" ]; then
+                      npm exec -- electron-builder --mac --arm64 --publish never -c.mac.identity=null
+                  elif [ "${RUNNER_OS}" = "Windows" ]; then
+                      npm exec -- electron-builder --win --x64 --publish never
+                  else
+                      echo "Unsupported runner OS: ${RUNNER_OS}"
+                      exit 1
+                  fi
+              env:
+                  CSC_IDENTITY_AUTO_DISCOVERY: false
+                  USE_HARD_LINKS: false
+
+            - name: Collect artifacts
+              if: env.TARGET == 'all' || env.TARGET == matrix.name
+              shell: bash
+              run: |
+                  set -euo pipefail
+
+                  mkdir -p artifacts
+                  find dist -maxdepth 1 -type f \
+                      \( -name "ente-*.dmg" -o -name "ente-*.zip" -o -name "ente-*.exe" -o -name "ente-*.blockmap" \) \
+                      -exec cp {} artifacts/ \;
+
+                  cd artifacts
+                  find . -maxdepth 1 -type f ! -name "sha256sum-*" -print0 | sort -z | xargs -0 sha256sum > "sha256sum-${{ matrix.name }}.txt"
+
+            - name: Upload desktop artifact
+              if: env.TARGET == 'all' || env.TARGET == matrix.name
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+              with:
+                  name: photos-custom-${{ matrix.name }}
+                  path: desktop/artifacts/*
