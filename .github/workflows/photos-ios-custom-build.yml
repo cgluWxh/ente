@@ -1,0 +1,98 @@
+name: "Build Photos iOS Custom"
+
+on:
+    push:
+        paths:
+            - ".github/workflows/photos-ios-custom-build.yml"
+            - "mobile/apps/photos/**"
+            - "mobile/packages/**"
+            - "rust/apps/codegen/**"
+            - "rust/bindings/frb/**"
+            - "rust/Cargo.lock"
+            - "rust/Cargo.toml"
+            - "rust/crates/core/**"
+            - "rust/crates/image/**"
+            - "rust/crates/photos/**"
+    workflow_dispatch:
+        inputs:
+            endpoint:
+                description: "API endpoint to compile into the app"
+                required: true
+                default: "https://ente.831.moe"
+                type: string
+
+env:
+    FLUTTER_VERSION: "3.38.10"
+    CUSTOM_ENDPOINT: ${{ github.event.inputs.endpoint || 'https://ente.831.moe' }}
+
+permissions:
+    contents: read
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    build-ios:
+        runs-on: macos-26
+
+        defaults:
+            run:
+                working-directory: mobile/apps/photos
+
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v6
+
+            - name: Install Flutter ${{ env.FLUTTER_VERSION }}
+              uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+              with:
+                  channel: "stable"
+                  flutter-version: ${{ env.FLUTTER_VERSION }}
+                  cache: true
+
+            - name: Resolve dependencies with lockfile enforcement
+              run: flutter pub get --enforce-lockfile
+
+            - name: Set up Rive iOS binaries
+              run: dart run rive_native:setup --clean --platform ios
+
+            - name: Generate Rust bindings
+              run: cargo codegen frb
+              working-directory: rust
+
+            - name: Install iOS pods
+              run: pod install --deployment
+              working-directory: mobile/apps/photos/ios
+
+            - name: Build unsigned release app
+              run: |
+                  flutter build ios \
+                    --release \
+                    --no-codesign \
+                    --dart-define=endpoint="${CUSTOM_ENDPOINT}" \
+                    --dart-define=cronetHttpNoPlay=true
+
+            - name: Package unsigned app
+              run: |
+                  mkdir -p artifacts
+                  rm -rf artifacts/Payload
+                  mkdir -p artifacts/Payload
+                  ditto build/ios/iphoneos/Runner.app artifacts/Payload/Runner.app
+                  (
+                    cd artifacts
+                    ditto -c -k --sequesterRsrc --keepParent Payload ente-photos-ios-custom-release-unsigned.ipa
+                  )
+                  ditto -c -k --sequesterRsrc --keepParent \
+                    build/ios/iphoneos/Runner.app \
+                    artifacts/ente-photos-ios-custom-release-unsigned-app.zip
+                  shasum -a 256 \
+                    artifacts/ente-photos-ios-custom-release-unsigned.ipa \
+                    artifacts/ente-photos-ios-custom-release-unsigned-app.zip \
+                    > artifacts/sha256sum-ios
+
+            - name: Upload unsigned iOS artifact
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+              with:
+                  name: photos-custom-ios-release-unsigned
+                  path: mobile/apps/photos/artifacts/*
