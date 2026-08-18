@@ -7,8 +7,8 @@ import (
 	"math/rand"
 	"strconv"
 
-	"github.com/ente-io/museum/ente"
-	"github.com/ente-io/stacktrace"
+	"github.com/ente/museum/ente"
+	"github.com/ente/stacktrace"
 	"github.com/lib/pq"
 )
 
@@ -16,6 +16,12 @@ type ObjectRepository struct {
 	DB                 *sql.DB
 	LatencySensitiveDB *sql.DB
 	QueueRepo          *QueueRepository
+}
+
+type ObjectReferenceStatus struct {
+	ObjectKey     string
+	InObjectKeys  bool
+	InTempObjects bool
 }
 
 func (repo *ObjectRepository) objectLookupDB() *sql.DB {
@@ -61,7 +67,6 @@ func (repo *ObjectRepository) GetObjectsForFileIDs(fileIDs []int64) ([]ente.S3Ob
 	return convertRowsToObjectKeys(rows)
 }
 
-// GetObject returns the ente.S3ObjectKey key for a file id and type
 func (repo *ObjectRepository) GetObject(fileID int64, objType ente.ObjectType) (ente.S3ObjectKey, error) {
 	// todo: handling of deleted objects
 	row := repo.objectLookupDB().QueryRow(`SELECT object_key, size, o_type FROM object_keys WHERE file_id = $1 AND o_type = $2 AND is_deleted=false`,
@@ -82,15 +87,12 @@ func (repo *ObjectRepository) GetObjectWithDCs(fileID int64, objType ente.Object
 	return s3ObjectKey, datacenters, stacktrace.Propagate(err, "")
 }
 
-// GetAccessibleObject verifies actor access and returns the S3 object key in a
-// single latency-sensitive DB query.
 func (repo *ObjectRepository) GetAccessibleObject(ctx context.Context, fileID int64, actorUserID int64, objType ente.ObjectType) (ente.S3ObjectKey, error) {
 	s3ObjectKey, _, err := repo.GetAccessibleObjectWithDCs(ctx, fileID, actorUserID, objType)
 	return s3ObjectKey, err
 }
 
-// GetAccessibleObjectWithDCs verifies actor access and returns the S3 object
-// key along with replicated datacenters in a single latency-sensitive DB query.
+// Keep access validation and object lookup in one latency-sensitive query.
 func (repo *ObjectRepository) GetAccessibleObjectWithDCs(ctx context.Context, fileID int64, actorUserID int64, objType ente.ObjectType) (ente.S3ObjectKey, []string, error) {
 	row := repo.objectLookupDB().QueryRowContext(ctx, `
 		SELECT
@@ -148,15 +150,12 @@ func (repo *ObjectRepository) GetAccessibleObjectWithDCs(ctx context.Context, fi
 	return s3ObjectKey, datacenters, nil
 }
 
-// GetOwnedObject verifies ownership and returns the S3 object key in a single
-// latency-sensitive DB query.
 func (repo *ObjectRepository) GetOwnedObject(ctx context.Context, fileID int64, ownerID int64, objType ente.ObjectType) (ente.S3ObjectKey, error) {
 	s3ObjectKey, _, err := repo.GetOwnedObjectWithDCs(ctx, fileID, ownerID, objType)
 	return s3ObjectKey, err
 }
 
-// GetOwnedObjectWithDCs verifies ownership and returns the S3 object key along
-// with replicated datacenters in a single latency-sensitive DB query.
+// Keep ownership validation and object lookup in one latency-sensitive query.
 func (repo *ObjectRepository) GetOwnedObjectWithDCs(ctx context.Context, fileID int64, ownerID int64, objType ente.ObjectType) (ente.S3ObjectKey, []string, error) {
 	row := repo.objectLookupDB().QueryRowContext(ctx, `
 		SELECT
@@ -203,15 +202,12 @@ func (repo *ObjectRepository) GetOwnedObjectWithDCs(ctx context.Context, fileID 
 	return s3ObjectKey, datacenters, nil
 }
 
-// GetCollectionObject verifies collection membership and returns the S3 object
-// key in a single latency-sensitive DB query.
 func (repo *ObjectRepository) GetCollectionObject(ctx context.Context, collectionID int64, fileID int64, objType ente.ObjectType) (ente.S3ObjectKey, error) {
 	s3ObjectKey, _, err := repo.GetCollectionObjectWithDCs(ctx, collectionID, fileID, objType)
 	return s3ObjectKey, err
 }
 
-// GetCollectionObjectWithDCs verifies collection membership and returns the S3
-// object key along with replicated datacenters in a single latency-sensitive DB
+// Keep collection access validation and object lookup in one latency-sensitive
 // query.
 func (repo *ObjectRepository) GetCollectionObjectWithDCs(ctx context.Context, collectionID int64, fileID int64, objType ente.ObjectType) (ente.S3ObjectKey, []string, error) {
 	row := repo.objectLookupDB().QueryRowContext(ctx, `
@@ -292,15 +288,12 @@ func (repo *ObjectRepository) RemoveDataCenterFromObject(objectKey string, datac
 	return stacktrace.Propagate(err, "")
 }
 
-// RemoveObjectsForKey removes the keys of a deleted object from our tables
 func (repo *ObjectRepository) RemoveObjectsForKey(objectKey string) error {
 	_, err := repo.DB.Exec(`DELETE FROM object_keys WHERE object_key = $1 AND is_deleted = TRUE`,
 		objectKey)
 	return stacktrace.Propagate(err, "")
 }
 
-// MarkObjectsAsDeletedForFileIDs marks the object keys corresponding to the given filesIDs as deleted
-// The actual deletion happens later when the queue is processed
 func (repo *ObjectRepository) MarkObjectsAsDeletedForFileIDs(ctx context.Context, tx *sql.Tx, fileIDs []int64) ([]ente.S3ObjectKey, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT file_id, o_type, object_key, size FROM object_keys 
 		WHERE file_id = ANY($1) AND is_deleted=false FOR UPDATE`, pq.Array(fileIDs))
@@ -363,7 +356,6 @@ func convertRowsToObjectKeys(rows *sql.Rows) ([]ente.S3ObjectKey, error) {
 	return fileObjectKeys, nil
 }
 
-// DoesObjectExist returns the true if there is an entry for the object key.
 func (repo *ObjectRepository) DoesObjectExist(tx *sql.Tx, objectKey string) (bool, error) {
 	var exists bool
 	err := tx.QueryRow(
@@ -372,8 +364,6 @@ func (repo *ObjectRepository) DoesObjectExist(tx *sql.Tx, objectKey string) (boo
 	return exists, stacktrace.Propagate(err, "")
 }
 
-// DoesObjectOrTempObjectExist returns the true if there is an entry for the object key in
-// either the object_keys or in temp_objects table.
 func (repo *ObjectRepository) DoesObjectOrTempObjectExist(objectKey string) (bool, error) {
 	var exists bool
 	err := repo.DB.QueryRow(
@@ -383,11 +373,60 @@ func (repo *ObjectRepository) DoesObjectOrTempObjectExist(objectKey string) (boo
 	return exists, stacktrace.Propagate(err, "")
 }
 
-// GetObjectState returns various bits of information about an object that are
-// useful in pre-flight checks during replication.
-//
-// Unknown objects (i.e. objectKeys for which there are no entries) are
-// considered as deleted.
+func (repo *ObjectRepository) GetObjectReferenceStatuses(ctx context.Context, objectKeys []string) (map[string]ObjectReferenceStatus, error) {
+	statuses := make(map[string]ObjectReferenceStatus, len(objectKeys))
+	if len(objectKeys) == 0 {
+		return statuses, nil
+	}
+	for _, objectKey := range objectKeys {
+		statuses[objectKey] = ObjectReferenceStatus{ObjectKey: objectKey}
+	}
+
+	rows, err := repo.DB.QueryContext(ctx,
+		`SELECT object_key FROM object_keys WHERE object_key = ANY($1::text[])`,
+		pq.Array(objectKeys),
+	)
+	if err != nil {
+		return nil, stacktrace.Propagate(err, "")
+	}
+	for rows.Next() {
+		var objectKey string
+		if err = rows.Scan(&objectKey); err != nil {
+			return nil, stacktrace.Propagate(err, "")
+		}
+		status := statuses[objectKey]
+		status.InObjectKeys = true
+		statuses[status.ObjectKey] = status
+	}
+	if err = rows.Close(); err != nil {
+		return nil, stacktrace.Propagate(err, "")
+	}
+	if err = rows.Err(); err != nil {
+		return nil, stacktrace.Propagate(err, "")
+	}
+
+	rows, err = repo.DB.QueryContext(ctx,
+		`SELECT object_key FROM temp_objects WHERE object_key = ANY($1::text[])`,
+		pq.Array(objectKeys),
+	)
+	if err != nil {
+		return nil, stacktrace.Propagate(err, "")
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var objectKey string
+		if err = rows.Scan(&objectKey); err != nil {
+			return nil, stacktrace.Propagate(err, "")
+		}
+		status := statuses[objectKey]
+		status.InTempObjects = true
+		statuses[status.ObjectKey] = status
+	}
+	return statuses, stacktrace.Propagate(rows.Err(), "")
+}
+
+// Unknown object keys are treated as deleted.
 func (repo *ObjectRepository) GetObjectState(objectKey string) (ObjectState ente.ObjectState, err error) {
 	row := repo.DB.QueryRow(`
 	SELECT ok.is_deleted, u.encrypted_email IS NULL AS is_user_deleted, ok.size

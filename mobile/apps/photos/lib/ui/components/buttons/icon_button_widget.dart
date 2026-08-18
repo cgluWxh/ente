@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:photos/theme/colors.dart';
 import 'package:photos/theme/ente_theme.dart';
@@ -35,6 +37,14 @@ class IconButtonWidget extends StatefulWidget {
 
 class _IconButtonWidgetState extends State<IconButtonWidget> {
   Color? iconStateColor;
+  Timer? _tapResetTimer;
+
+  @override
+  void dispose() {
+    _tapResetTimer?.cancel();
+    super.dispose();
+  }
+
   @override
   void didUpdateWidget(IconButtonWidget oldWidget) {
     if ((oldWidget.icon != widget.icon ||
@@ -98,7 +108,7 @@ class _IconButtonWidgetState extends State<IconButtonWidget> {
     );
   }
 
-  _onTapDown(details) {
+  void _onTapDown(TapDownDetails details) {
     final colorTheme = getEnteColorScheme(context);
     setState(() {
       iconStateColor =
@@ -109,17 +119,19 @@ class _IconButtonWidgetState extends State<IconButtonWidget> {
     });
   }
 
-  _onTapUp(details) {
-    Future.delayed(const Duration(milliseconds: 100), () {
-      if (mounted) {
-        setState(() {
-          iconStateColor = null;
-        });
-      }
+  void _onTapUp(TapUpDetails details) {
+    _tapResetTimer?.cancel();
+    _tapResetTimer = Timer(const Duration(milliseconds: 100), () {
+      _tapResetTimer = null;
+      if (!mounted) return;
+      setState(() {
+        iconStateColor = null;
+      });
     });
   }
 
-  _onTapCancel() {
+  void _onTapCancel() {
+    _tapResetTimer?.cancel();
     setState(() {
       iconStateColor = null;
     });

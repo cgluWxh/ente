@@ -3,21 +3,17 @@ package middleware
 import (
 	"net/http"
 
-	"github.com/ente-io/museum/ente"
-	"github.com/ente-io/museum/pkg/repo"
-	"github.com/ente-io/museum/pkg/utils/auth"
-	"github.com/ente-io/museum/pkg/utils/network"
+	"github.com/ente/museum/ente"
+	"github.com/ente/museum/pkg/repo"
+	"github.com/ente/museum/pkg/utils/auth"
+	"github.com/ente/museum/pkg/utils/network"
 	"github.com/gin-gonic/gin"
 )
 
-// MemoryShareMiddleware intercepts and authenticates incoming requests for public memory shares
 type MemoryShareMiddleware struct {
 	Repo *repo.MemoryShareRepository
 }
 
-// Authenticate returns a middleware that extracts the `X-Auth-Access-Token`
-// within the header of a request and uses it to validate the access token and set the
-// ente.MemoryShareAccessContext with auth.MemoryShareAccessKey as key
 func (m *MemoryShareMiddleware) Authenticate(urlSanitizer func(_ *gin.Context) string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		_ = urlSanitizer
@@ -45,7 +41,6 @@ func (m *MemoryShareMiddleware) Authenticate(urlSanitizer func(_ *gin.Context) s
 			return
 		}
 
-		// Set context for handlers
 		accessCtx := ente.MemoryShareAccessContext{
 			ID:          share.ID,
 			ShareID:     share.ID,

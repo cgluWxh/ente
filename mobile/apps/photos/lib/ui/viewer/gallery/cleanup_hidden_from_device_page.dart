@@ -1,11 +1,11 @@
 import "dart:math";
 import "dart:ui";
 
+import "package:ente_strings/ente_strings.dart";
 import "package:flutter/material.dart";
 import "package:photos/core/event_bus.dart";
 import "package:photos/events/files_updated_event.dart";
 import "package:photos/events/local_photos_updated_event.dart";
-import "package:photos/generated/l10n.dart";
 import "package:photos/models/file_load_result.dart";
 import "package:photos/models/gallery_type.dart";
 import "package:photos/models/selected_files.dart";
@@ -60,8 +60,14 @@ class _CleanupHiddenFromDevicePageState
     final filesAreSelected = _selectedFiles.files.isNotEmpty;
     final bottomPadding = MediaQuery.of(context).padding.bottom;
     final deleteAllButtonHeight = 40.0 + max(bottomPadding, 6.0) + 12.0;
+    final appBar = GalleryAppBarWidget.sliverConfig(
+      GalleryType.cleanupHiddenFromDevice,
+      context.strings.deleteOnDeviceFiles,
+      _selectedFiles,
+    );
 
     final gallery = Gallery(
+      appBar: appBar,
       asyncLoader: (creationStartTime, creationEndTime, {limit, asc}) async {
         final files = await CollectionsService.instance
             .getHiddenFilesOnDevice();
@@ -72,24 +78,12 @@ class _CleanupHiddenFromDevicePageState
       tagPrefix: "cleanup_hidden_from_device",
       selectedFiles: _selectedFiles,
       enableFileGrouping: false,
-      emptyState: EmptyState(
-        text: AppLocalizations.of(context).noHiddenFilesOnDevice,
-      ),
+      emptyState: EmptyState(text: context.strings.noHiddenFilesOnDevice),
     );
 
     return GalleryBoundariesProvider(
       child: GalleryFilesState(
         child: Scaffold(
-          appBar: PreferredSize(
-            preferredSize: const Size.fromHeight(
-              GalleryAppBarWidget.toolbarHeight,
-            ),
-            child: GalleryAppBarWidget(
-              GalleryType.cleanupHiddenFromDevice,
-              AppLocalizations.of(context).deleteOnDeviceFiles,
-              _selectedFiles,
-            ),
-          ),
           body: SelectionState(
             selectedFiles: _selectedFiles,
             child: Stack(
@@ -149,7 +143,7 @@ class _CleanupHiddenFromDevicePageState
                       horizontal: 16,
                     ),
                     child: Text(
-                      AppLocalizations.of(context).deleteAll,
+                      context.strings.deleteAll,
                       style: Theme.of(context).textTheme.titleSmall!.copyWith(
                         color: const Color.fromRGBO(255, 101, 101, 1),
                       ),
@@ -168,7 +162,9 @@ class _CleanupHiddenFromDevicePageState
     final allFiles = await CollectionsService.instance.getHiddenFilesOnDevice();
     if (allFiles.isEmpty) return;
 
-    final l10n = AppLocalizations.of(context);
+    if (!mounted) return;
+    final l10n = context.strings;
+    if (!mounted) return;
     final actionResult = await showActionSheet(
       context: context,
       title: l10n.deleteFromDeviceQuestion,
@@ -186,6 +182,7 @@ class _CleanupHiddenFromDevicePageState
               await deleteFilesOnDeviceOnly(context, allFiles);
             } catch (e) {
               if (context.mounted) {
+                if (!mounted) return;
                 await showGenericErrorDialog(context: context, error: e);
               }
               rethrow;
@@ -208,6 +205,7 @@ class _CleanupHiddenFromDevicePageState
     if (actionResult?.action == ButtonAction.first) {
       widget.onCleanupComplete?.call();
       if (context.mounted) {
+        if (!mounted) return;
         Navigator.of(context).pop();
       }
     }

@@ -13,10 +13,10 @@ import "package:photos/models/file/file.dart";
 import "package:photos/models/file/file_type.dart";
 import "package:photos/models/ml/face/box.dart";
 import "package:photos/models/ml/face/face.dart";
+import "package:photos/module/download/file.dart";
+import "package:photos/module/download/thumbnail.dart";
 import "package:photos/service_locator.dart" show isLocalGalleryMode;
 import "package:photos/services/machine_learning/face_thumbnail_generator.dart";
-import "package:photos/utils/file_util.dart";
-import "package:photos/utils/thumbnail_util.dart";
 
 final _logger = Logger("FaceCropUtils");
 
@@ -134,7 +134,7 @@ Future<void> checkRemoveCachedFaceIDForPersonOrClusterId(
   }
 }
 
-/// Careful to only use [personOrClusterID] if all [faces] are from the same person or cluster.
+// Pass personOrClusterID only when every face belongs to that person or cluster.
 Future<Map<String, Uint8List>?> getCachedFaceCrops(
   EnteFile enteFile,
   Iterable<Face> faces, {
@@ -276,8 +276,8 @@ Future<Map<String, Uint8List>?> getCachedFaceCrops(
 }
 
 Future<Uint8List?> precomputeClusterFaceCrop(
-  file,
-  clusterID, {
+  EnteFile file,
+  String clusterID, {
   required bool useFullFile,
 }) async {
   try {
@@ -408,11 +408,7 @@ Future<Map<String, Uint8List>?> _getFaceCrops(
     faceBoxes.add(e.value);
   }
   final List<Uint8List> faceCrop = await FaceThumbnailGenerator.instance
-      .generateFaceThumbnails(
-        // await generateJpgFaceThumbnails(
-        imagePath,
-        faceBoxes,
-      );
+      .generateFaceThumbnails(imagePath, faceBoxes);
   final Map<String, Uint8List> result = {};
   for (int i = 0; i < faceCrop.length; i++) {
     result[faceIds[i]] = faceCrop[i];

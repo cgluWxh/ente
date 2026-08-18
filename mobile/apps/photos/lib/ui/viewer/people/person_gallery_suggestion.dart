@@ -1,12 +1,12 @@
 import "dart:async";
 import "dart:typed_data";
 
+import "package:ente_strings/ente_strings.dart";
 import 'package:flutter/material.dart';
 import "package:logging/logging.dart";
 import "package:photos/core/event_bus.dart";
 import "package:photos/db/ml/db.dart";
 import "package:photos/events/people_changed_event.dart";
-import "package:photos/generated/l10n.dart";
 import "package:photos/models/file/file.dart";
 import "package:photos/models/ml/face/person.dart";
 import "package:photos/services/machine_learning/face_ml/feedback/cluster_feedback.dart";
@@ -45,6 +45,8 @@ class _PersonGallerySuggestionState extends State<PersonGallerySuggestion>
   bool isPreparingNext = false;
   bool hasCurrentSuggestion = false;
   Map<int, Map<int, Uint8List?>> precomputedFaceCrops = {};
+  late final StreamSubscription<PeopleChangedEvent> _peopleChangedEvent;
+  int _suggestionLoadID = 0;
 
   PersonEntity? person;
   bool get personPage => widget.person != null;
@@ -60,6 +62,13 @@ class _PersonGallerySuggestionState extends State<PersonGallerySuggestion>
     super.initState();
     person = widget.person;
     _initializeAnimations();
+    _peopleChangedEvent = Bus.instance.on<PeopleChangedEvent>().listen((event) {
+      if (personPage &&
+          event.type == PeopleEventType.reviewedSuggestion &&
+          event.person?.remoteID == widget.person!.remoteID) {
+        unawaited(_reloadSuggestions());
+      }
+    });
     _loadInitialSuggestion();
   }
 
@@ -87,6 +96,7 @@ class _PersonGallerySuggestionState extends State<PersonGallerySuggestion>
   }
 
   Future<void> _loadInitialSuggestion() async {
+    final loadID = ++_suggestionLoadID;
     try {
       late final List<ClusterSuggestion> suggestions;
       if (personPage) {
@@ -100,7 +110,7 @@ class _PersonGallerySuggestionState extends State<PersonGallerySuggestion>
         }
       }
 
-      if (suggestions.isNotEmpty && mounted) {
+      if (suggestions.isNotEmpty && mounted && loadID == _suggestionLoadID) {
         allSuggestions = suggestions;
         currentSuggestionIndex = 0;
 
@@ -109,7 +119,7 @@ class _PersonGallerySuggestionState extends State<PersonGallerySuggestion>
           allSuggestions[0].clusterIDToMerge,
         );
 
-        if (mounted) {
+        if (mounted && loadID == _suggestionLoadID) {
           setState(() {
             faceCrops = crops;
             isLoading = false;
@@ -117,23 +127,33 @@ class _PersonGallerySuggestionState extends State<PersonGallerySuggestion>
           });
         }
 
-        if (mounted && _fadeController != null && _slideController != null) {
+        if (mounted &&
+            loadID == _suggestionLoadID &&
+            _fadeController != null &&
+            _slideController != null) {
           unawaited(_fadeController?.forward());
           unawaited(_slideController?.forward());
         }
 
-        unawaited(_precomputeNextSuggestions());
+        unawaited(_precomputeNextSuggestions(loadID));
       } else {
         _logger.info("No suggestions found");
-        if (mounted) {
+        if (mounted && loadID == _suggestionLoadID) {
           setState(() {
+            allSuggestions = [];
+            currentSuggestionIndex = 0;
+            faceCrops = {};
+            precomputedFaceCrops = {};
             isLoading = false;
+            isProcessing = false;
+            isPreparingNext = false;
+            hasCurrentSuggestion = false;
           });
         }
       }
     } catch (e, s) {
       _logger.severe("Error loading suggestion", e, s);
-      if (mounted) {
+      if (mounted && loadID == _suggestionLoadID) {
         setState(() {
           isLoading = false;
         });
@@ -141,9 +161,27 @@ class _PersonGallerySuggestionState extends State<PersonGallerySuggestion>
     }
   }
 
-  Future<void> _precomputeNextSuggestions() async {
+  Future<void> _reloadSuggestions() async {
+    _slideController?.reset();
+    _fadeController?.reset();
+    if (mounted) {
+      setState(() {
+        isLoading = true;
+        isProcessing = false;
+        isPreparingNext = false;
+        hasCurrentSuggestion = false;
+        allSuggestions = [];
+        currentSuggestionIndex = 0;
+        faceCrops = {};
+        precomputedFaceCrops = {};
+      });
+    }
+    await _loadInitialSuggestion();
+  }
+
+  Future<void> _precomputeNextSuggestions([int? expectedLoadID]) async {
+    final loadID = expectedLoadID ?? _suggestionLoadID;
     try {
-      // Precompute face crops for next two suggestions
       const maxPrecompute = 2;
       final endIndex = (currentSuggestionIndex + maxPrecompute).clamp(
         0,
@@ -151,7 +189,7 @@ class _PersonGallerySuggestionState extends State<PersonGallerySuggestion>
       );
 
       for (int i = currentSuggestionIndex + 1; i < endIndex; i++) {
-        if (!mounted) break;
+        if (!mounted || loadID != _suggestionLoadID) break;
 
         final suggestion = allSuggestions[i];
         final crops = await _generateFaceThumbnails(
@@ -159,7 +197,7 @@ class _PersonGallerySuggestionState extends State<PersonGallerySuggestion>
           suggestion.clusterIDToMerge,
         );
 
-        if (mounted) {
+        if (mounted && loadID == _suggestionLoadID) {
           precomputedFaceCrops[i] = crops;
         }
       }
@@ -318,7 +356,6 @@ class _PersonGallerySuggestionState extends State<PersonGallerySuggestion>
         ),
       );
       if (result == null || result == false) {
-        // Animate back in and reset processing state
         unawaited(_animateIn());
         if (mounted) {
           setState(() {
@@ -327,7 +364,6 @@ class _PersonGallerySuggestionState extends State<PersonGallerySuggestion>
         }
         return;
       }
-      // Wait for animation to complete before hiding widget
       await Future.delayed(const Duration(milliseconds: 300));
       if (mounted) {
         setState(() {
@@ -349,14 +385,11 @@ class _PersonGallerySuggestionState extends State<PersonGallerySuggestion>
   Future<void> _prepareNextSuggestion() async {
     if (!mounted) return;
 
-    // Move to next suggestion
     currentSuggestionIndex++;
 
-    // Check if we have more suggestions
     if (currentSuggestionIndex < allSuggestions.length) {
       person = allSuggestions[currentSuggestionIndex].person;
       try {
-        // Get face crops for next suggestion (from precomputed or generate new)
         Map<int, Uint8List?> nextCrops;
         if (precomputedFaceCrops.containsKey(currentSuggestionIndex)) {
           nextCrops = precomputedFaceCrops[currentSuggestionIndex]!;
@@ -388,7 +421,6 @@ class _PersonGallerySuggestionState extends State<PersonGallerySuggestion>
         }
       }
     } else {
-      // No more suggestions available - stay hidden
       if (mounted) {
         setState(() {
           isProcessing = false;
@@ -421,6 +453,8 @@ class _PersonGallerySuggestionState extends State<PersonGallerySuggestion>
 
   @override
   void dispose() {
+    _suggestionLoadID++;
+    _peopleChangedEvent.cancel();
     _slideController?.dispose();
     _fadeController?.dispose();
     super.dispose();
@@ -470,23 +504,17 @@ class _PersonGallerySuggestionState extends State<PersonGallerySuggestion>
                             text: TextSpan(
                               style: textTheme.body,
                               children: [
-                                TextSpan(
-                                  text: AppLocalizations.of(context).areThey,
-                                ),
+                                TextSpan(text: context.strings.areThey),
                                 TextSpan(
                                   text: relevantPerson.data.name,
                                   style: textTheme.bodyBold,
                                 ),
-                                TextSpan(
-                                  text: AppLocalizations.of(
-                                    context,
-                                  ).questionmark,
-                                ),
+                                TextSpan(text: context.strings.questionmark),
                               ],
                             ),
                           )
                         : Text(
-                            AppLocalizations.of(context).sameperson,
+                            context.strings.sameperson,
                             style: textTheme.body,
                             textAlign: TextAlign.center,
                           ),
@@ -525,7 +553,7 @@ class _PersonGallerySuggestionState extends State<PersonGallerySuggestion>
                                   ),
                                   const SizedBox(width: 8),
                                   Text(
-                                    AppLocalizations.of(context).no,
+                                    context.strings.no,
                                     style:
                                         (personPage
                                                 ? textTheme.bodyBold
@@ -564,7 +592,7 @@ class _PersonGallerySuggestionState extends State<PersonGallerySuggestion>
                                   ),
                                   const SizedBox(width: 8),
                                   Text(
-                                    AppLocalizations.of(context).yes,
+                                    context.strings.yes,
                                     style:
                                         (personPage
                                                 ? textTheme.bodyBold
@@ -591,7 +619,7 @@ class _PersonGallerySuggestionState extends State<PersonGallerySuggestion>
                             horizontal: 32,
                           ),
                           child: Text(
-                            AppLocalizations.of(context).saveAsAnotherPerson,
+                            context.strings.saveAsAnotherPerson,
                             style: textTheme.mini.copyWith(
                               color: colorScheme.textMuted,
                               decoration: TextDecoration.underline,

@@ -2,7 +2,6 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:ente_contacts/contacts.dart';
-import 'package:ente_contacts/src/rust/contacts_rust_api.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -47,11 +46,7 @@ void main() {
           id: 'ct_1',
           contactUserId: 2,
           email: 'b@test.test',
-          data: ContactData(
-            contactUserId: 2,
-            name: 'B',
-            birthDate: '2001-04-02',
-          ),
+          data: ContactData(contactUserId: 2, name: 'B'),
           profilePictureAttachmentId: 'att_1',
           isDeleted: false,
           createdAt: 10,

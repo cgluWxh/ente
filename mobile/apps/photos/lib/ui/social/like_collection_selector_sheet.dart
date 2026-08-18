@@ -1,16 +1,17 @@
 import "package:ente_icons/ente_icons.dart";
+import "package:ente_strings/ente_strings.dart";
+import "package:ente_ui/components/loading_widget.dart";
+import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
 import "package:logging/logging.dart";
 import "package:photos/core/constants.dart";
 import "package:photos/db/files_db.dart";
-import "package:photos/generated/l10n.dart";
 import "package:photos/models/collection/collection.dart";
 import "package:photos/models/file/extensions/file_props.dart";
 import "package:photos/models/file/file.dart";
 import "package:photos/models/social/social_data_provider.dart";
-import "package:photos/services/collections_service.dart";
+import "package:photos/service_locator.dart";
 import "package:photos/theme/ente_theme.dart";
-import "package:photos/ui/common/loading_widget.dart";
 import "package:photos/ui/components/buttons/icon_button_widget.dart";
 import "package:photos/ui/notification/toast.dart";
 import "package:photos/ui/viewer/file/thumbnail_widget.dart";
@@ -19,7 +20,6 @@ final _logger = Logger("LikeCollectionSelectorSheet");
 
 const _greenHeartColor = Color(0xFF08C225);
 
-/// Holds collection info with mutable like state for the selector
 class _CollectionLikeState {
   final Collection collection;
   bool isLiked;
@@ -27,16 +27,11 @@ class _CollectionLikeState {
   _CollectionLikeState({required this.collection, required this.isLiked});
 }
 
-/// Shows the like collection selector bottom sheet
-///
-/// Parameters:
-/// - [fileID]: The uploaded file ID to like
-/// - [currentUserID]: Current user's ID for checking existing likes
-/// - [file]: The EnteFile for displaying thumbnail (optional, will fetch if null)
 Future<void> showLikeCollectionSelectorSheet(
   BuildContext context, {
   required int fileID,
   required int currentUserID,
+  required List<Collection> collections,
   EnteFile? file,
 }) {
   return showModalBottomSheet(
@@ -46,6 +41,7 @@ Future<void> showLikeCollectionSelectorSheet(
     builder: (_) => LikeCollectionSelectorSheet(
       fileID: fileID,
       currentUserID: currentUserID,
+      collections: collections,
       file: file,
     ),
   );
@@ -54,11 +50,13 @@ Future<void> showLikeCollectionSelectorSheet(
 class LikeCollectionSelectorSheet extends StatefulWidget {
   final int fileID;
   final int currentUserID;
+  final List<Collection> collections;
   final EnteFile? file;
 
   const LikeCollectionSelectorSheet({
     required this.fileID,
     required this.currentUserID,
+    required this.collections,
     this.file,
     super.key,
   });
@@ -86,33 +84,10 @@ class _LikeCollectionSelectorSheetState
 
   Future<void> _loadData() async {
     try {
-      // Load file if not provided (for thumbnail)
       _file ??= await FilesDB.instance.getAnyUploadedFile(widget.fileID);
 
-      // Get all collections containing this file
-      final collectionIDs = await FilesDB.instance.getAllCollectionIDsOfFile(
-        widget.fileID,
-      );
-
-      // Filter to shared collections only
-      final sharedCollections = collectionIDs
-          .map((id) => CollectionsService.instance.getCollectionByID(id))
-          .whereType<Collection>()
-          .where(
-            (c) =>
-                c.hasSharees || c.hasLink || !c.isOwner(widget.currentUserID),
-          )
-          .toList();
-
-      // If no shared collections, close the sheet
-      if (sharedCollections.isEmpty) {
-        if (mounted) Navigator.of(context).pop();
-        return;
-      }
-
-      // Fetch like states in parallel
       final collectionStates = await Future.wait(
-        sharedCollections.map((collection) async {
+        widget.collections.map((collection) async {
           final reactions = await SocialDataProvider.instance
               .getReactionsForFileInCollection(widget.fileID, collection.id);
           final isLiked = reactions.any(
@@ -141,7 +116,6 @@ class _LikeCollectionSelectorSheetState
 
   Future<void> _toggleLike(_CollectionLikeState state) async {
     final previousState = state.isLiked;
-    // Optimistic UI update
     setState(() => state.isLiked = !state.isLiked);
 
     try {
@@ -154,35 +128,29 @@ class _LikeCollectionSelectorSheetState
       _logger.severe("Failed to toggle like", e);
       if (mounted) {
         setState(() => state.isLiked = previousState);
-        showShortToast(
-          context,
-          AppLocalizations.of(context).failedToUpdateLike,
-        );
+        if (flagService.internalUser || kDebugMode) {
+          showShortToast(context, context.strings.failedToUpdateLike);
+        }
       }
     }
   }
 
   Future<void> _likeAll() async {
-    // Get collections that aren't already liked
     final toLike = _collections.where((c) => !c.isLiked).toList();
 
     if (toLike.isEmpty) {
-      // All already liked, just close
       Navigator.of(context).pop();
       return;
     }
 
-    // Optimistic UI update
     setState(() {
       for (final c in toLike) {
         c.isLiked = true;
       }
     });
 
-    // Track failures for rollback
     final failed = <_CollectionLikeState>[];
 
-    // Perform all likes in parallel
     await Future.wait(
       toLike.map((c) async {
         try {
@@ -200,7 +168,6 @@ class _LikeCollectionSelectorSheetState
 
     if (!mounted) return;
 
-    // Rollback failed items and show toast
     if (failed.isNotEmpty) {
       setState(() {
         for (final c in failed) {
@@ -209,13 +176,11 @@ class _LikeCollectionSelectorSheetState
       });
       showShortToast(
         context,
-        AppLocalizations.of(context).failedToLikeAlbums(count: failed.length),
+        context.strings.failedToLikeAlbums(count: failed.length),
       );
-      // Don't close sheet - let user retry
       return;
     }
 
-    // Close sheet after successful "Like all"
     Navigator.of(context).pop();
   }
 
@@ -244,7 +209,6 @@ class _LikeCollectionSelectorSheetState
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Header with close button - inlined for simplicity
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 11, 12, 0),
               child: Row(
@@ -296,7 +260,6 @@ class _LikeCollectionSelectorSheetState
               allLiked: _allLiked,
               onLikeAll: _likeAll,
             ),
-            // Album list
             Flexible(
               child: Scrollbar(
                 thumbVisibility: true,
@@ -322,7 +285,7 @@ class _LikeCollectionSelectorSheetState
   }
 
   Widget _buildErrorState() {
-    final l10n = AppLocalizations.of(context);
+    final l10n = context.strings;
     final textTheme = getEnteTextTheme(context);
 
     return Padding(
@@ -349,7 +312,7 @@ class _AlbumsHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context);
+    final l10n = context.strings;
     final textTheme = getEnteTextTheme(context);
     final colorScheme = getEnteColorScheme(context);
     final isDarkMode = Theme.of(context).brightness == Brightness.dark;
@@ -397,7 +360,7 @@ class _TitleSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context);
+    final l10n = context.strings;
     final textTheme = getEnteTextTheme(context);
     final colorScheme = getEnteColorScheme(context);
 
@@ -473,8 +436,8 @@ class _AlbumListItem extends StatelessWidget {
     final textTheme = getEnteTextTheme(context);
     final isDarkTheme = Theme.of(context).brightness == Brightness.dark;
     final heartContainerBg = isDarkTheme
-        ? const Color(0x1A08C225) // ~10% opacity for dark
-        : const Color(0x0F08C225); // ~6% opacity for light
+        ? const Color(0x1A08C225)
+        : const Color(0x0F08C225);
 
     return GestureDetector(
       onTap: onTap,

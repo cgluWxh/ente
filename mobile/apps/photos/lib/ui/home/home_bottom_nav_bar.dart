@@ -62,7 +62,6 @@ class _HomeBottomNavigationBarState extends State<HomeBottomNavigationBar> {
         }
       } else if (event.source == TabChangedEventSource.tabBar &&
           currentTabIndex == event.selectedIndex) {
-        // user tapped on the currently selected index on the tapBar
         Bus.instance.fire(TabDoubleTapEvent(currentTabIndex));
       }
     });
@@ -156,21 +155,25 @@ class _HomeNavBar extends StatelessWidget {
   static const _tabs = [
     _HomeNavTab(
       semanticLabel: 'Home',
+      semanticIdentifier: 'ente.photos.tab.home',
       outlineAsset: 'assets/icons/nav_bar/home_outline.svg',
       filledAsset: 'assets/icons/nav_bar/home_filled.svg',
     ),
     _HomeNavTab(
       semanticLabel: 'Albums',
+      semanticIdentifier: 'ente.photos.tab.albums',
       outlineAsset: 'assets/icons/nav_bar/albums_outline.svg',
       filledAsset: 'assets/icons/nav_bar/albums_filled.svg',
     ),
     _HomeNavTab(
       semanticLabel: 'Feed',
+      semanticIdentifier: 'ente.photos.tab.feed',
       outlineAsset: 'assets/icons/nav_bar/feed_outline.svg',
       filledAsset: 'assets/icons/nav_bar/feed_filled.svg',
     ),
     _HomeNavTab(
       semanticLabel: 'Search',
+      semanticIdentifier: 'ente.photos.tab.search',
       outlineAsset: 'assets/icons/nav_bar/search_outline.svg',
       filledAsset: 'assets/icons/nav_bar/search_filled.svg',
     ),
@@ -212,6 +215,7 @@ class _HomeNavBar extends StatelessWidget {
           ),
           text: '',
           semanticLabel: _tabs[index].semanticLabel,
+          semanticIdentifier: _tabs[index].semanticIdentifier,
           leading: SizedBox.square(
             dimension: IconSizes.small,
             child: _HomeNavIcon(
@@ -252,11 +256,13 @@ class _HomeNavIcon extends StatelessWidget {
 class _HomeNavTab {
   const _HomeNavTab({
     required this.semanticLabel,
+    required this.semanticIdentifier,
     required this.outlineAsset,
     required this.filledAsset,
   });
 
   final String semanticLabel;
+  final String semanticIdentifier;
   final String outlineAsset;
   final String filledAsset;
 }

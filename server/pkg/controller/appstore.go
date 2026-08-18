@@ -5,29 +5,28 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/ente-io/museum/pkg/controller/commonbilling"
-	"github.com/ente-io/museum/pkg/controller/discord"
-	"github.com/ente-io/museum/pkg/utils/email"
+	"github.com/ente/museum/pkg/controller/commonbilling"
+	"github.com/ente/museum/pkg/controller/discord"
+	"github.com/ente/museum/pkg/utils/email"
 	"github.com/prometheus/common/log"
 
-	"github.com/ente-io/stacktrace"
+	"github.com/ente/stacktrace"
 	"github.com/gin-contrib/requestid"
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 
 	"github.com/awa/go-iap/appstore"
-	"github.com/ente-io/museum/ente"
-	"github.com/ente-io/museum/pkg/repo"
-	"github.com/ente-io/museum/pkg/repo/remotestore"
-	"github.com/ente-io/museum/pkg/utils/array"
+	"github.com/ente/museum/ente"
+	"github.com/ente/museum/pkg/repo"
+	"github.com/ente/museum/pkg/repo/remotestore"
 )
 
-// AppStoreController provides abstractions for handling billing on AppStore
 type AppStoreController struct {
 	AppStoreClient         appstore.Client
 	BillingRepo            *repo.BillingRepository
@@ -37,11 +36,9 @@ type AppStoreController struct {
 	BillingPlansPerCountry ente.BillingPlansPerCountry
 	CommonBillCtrl         *commonbilling.Controller
 	DiscordController      *discord.DiscordController
-	// appStoreSharedPassword is the password to be used to access AppStore APIs
 	appStoreSharedPassword string
 }
 
-// Return a new instance of AppStoreController
 func NewAppStoreController(
 	plans ente.BillingPlansPerCountry,
 	billingRepo *repo.BillingRepository,
@@ -67,8 +64,12 @@ func NewAppStoreController(
 
 var SubsUpdateNotificationTypes = []string{string(appstore.NotificationTypeDidChangeRenewalStatus), string(appstore.NotificationTypeCancel), string(appstore.NotificationTypeDidRevoke)}
 
-// validateSandboxRequest checks if the request is from sandbox environment.
-// If sandbox, it sends a Discord alert and returns an error for non-whitelisted users.
+func isEnteSandboxEmail(userEmail string) bool {
+	normalizedEmail := email.NormalizeEmail(userEmail)
+	return strings.HasSuffix(normalizedEmail, "@ente.io") ||
+		strings.HasSuffix(normalizedEmail, "@ente.com")
+}
+
 func (c *AppStoreController) validateSandboxRequest(ctx context.Context, environment string, userID int64, sandboxContext string) error {
 	if environment != "Sandbox" {
 		return nil
@@ -83,7 +84,7 @@ func (c *AppStoreController) validateSandboxRequest(ctx context.Context, environ
 	c.DiscordController.NotifyThrottled(fmt.Sprintf("iOS Sandbox %s for user: %s (userID: %d)",
 		sandboxContext, maskedEmail, userID), 10*time.Minute)
 
-	if strings.HasSuffix(email.NormalizeEmail(user.Email), "@ente.io") {
+	if isEnteSandboxEmail(user.Email) {
 		return nil
 	}
 
@@ -99,7 +100,6 @@ func (c *AppStoreController) validateSandboxRequest(ctx context.Context, environ
 	return stacktrace.Propagate(ente.NewInternalError("sandbox request from external user"), "")
 }
 
-// HandleNotification handles an AppStore notification
 func (c *AppStoreController) HandleNotification(ctx *gin.Context, notification appstore.SubscriptionNotification) error {
 	logger := logrus.WithFields(logrus.Fields{
 		"req_id": requestid.Get(ctx),
@@ -109,10 +109,9 @@ func (c *AppStoreController) HandleNotification(ctx *gin.Context, notification a
 		return stacktrace.Propagate(err, "")
 	}
 	latestReceiptInfo := c.getLatestReceiptInfo(purchase.LatestReceiptInfo)
-	if latestReceiptInfo.TransactionID == latestReceiptInfo.OriginalTransactionID && !array.StringInList(string(notification.NotificationType), SubsUpdateNotificationTypes) {
+	if latestReceiptInfo.TransactionID == latestReceiptInfo.OriginalTransactionID && !slices.Contains(SubsUpdateNotificationTypes, string(notification.NotificationType)) {
 		var logMsg = fmt.Sprintf("Ignoring notification of type %s", notification.NotificationType)
 		if notification.NotificationType != appstore.NotificationTypeInitialBuy {
-			// log unexpected notification types
 			logger.Error(logMsg)
 		} else {
 			logger.Info(logMsg)
@@ -143,7 +142,7 @@ func (c *AppStoreController) HandleNotification(ctx *gin.Context, notification a
 					break
 				}
 			}
-			if newPlan.Storage < subscription.Storage { // Downgrade
+			if newPlan.Storage < subscription.Storage {
 				canDowngrade, canDowngradeErr := c.CommonBillCtrl.CanDowngradeToGivenStorage(newPlan.Storage, subscription.UserID)
 				if canDowngradeErr != nil {
 					return stacktrace.Propagate(canDowngradeErr, "")
@@ -190,7 +189,6 @@ func (c *AppStoreController) HandleNotification(ctx *gin.Context, notification a
 	return stacktrace.Propagate(err, "")
 }
 
-// GetVerifiedSubscription verifies and returns the verified subscription
 func (c *AppStoreController) GetVerifiedSubscription(userID int64, productID string, verificationData string) (ente.Subscription, error) {
 	var s ente.Subscription
 	s.UserID = userID
@@ -221,7 +219,6 @@ func (c *AppStoreController) GetVerifiedSubscription(userID int64, productID str
 	return s, nil
 }
 
-// VerifyAppStoreSubscription verifies an AppStore subscription
 func (c *AppStoreController) verifyAppStoreSubscription(verificationData string) (*appstore.IAPResponse, error) {
 	iapRequest := appstore.IAPRequest{
 		ReceiptData: verificationData,

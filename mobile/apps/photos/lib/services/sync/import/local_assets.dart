@@ -1,13 +1,13 @@
 import 'dart:io';
-import 'dart:math';
 
 import 'package:computer/computer.dart';
 import 'package:logging/logging.dart';
 import 'package:photo_manager/photo_manager.dart';
-import 'package:photos/core/errors.dart';
 import 'package:photos/core/event_bus.dart';
 import 'package:photos/events/local_import_progress.dart';
 import 'package:photos/models/file/file.dart';
+import "package:photos/module/metadata/asset_date_times.dart";
+import "package:photos/module/metadata/local_file.dart";
 import "package:photos/services/sync/import/model.dart";
 import 'package:tuple/tuple.dart';
 
@@ -25,9 +25,7 @@ Future<Tuple2<List<LocalPathAsset>, List<EnteFile>>> getLocalPathAssetsAndFiles(
   );
   final List<LocalPathAsset> localPathAssets = [];
 
-  // alreadySeenLocalIDs is used to track and ignore file with particular
-  // localID if it's already present in another album. This only impacts iOS
-  // devices where a file can belong to multiple
+  // iOS assets can belong to multiple albums; emit each local ID once.
   final Set<String> alreadySeenLocalIDs = {};
   final List<EnteFile> uniqueFiles = [];
   for (AssetPathEntity pathEntity in pathEntities) {
@@ -68,11 +66,6 @@ Future<Tuple2<List<LocalPathAsset>, List<EnteFile>>> getLocalPathAssetsAndFiles(
   return Tuple2(localPathAssets, uniqueFiles);
 }
 
-// getDeviceFolderWithCountAndLatestFile returns a tuple of AssetPathEntity and
-// latest file's localID in the assetPath, along with modifiedPath time and
-// total count of assets in a Asset Path.
-// We use this result to update the latest thumbnail for deviceFolder and
-// identify (in future) which AssetPath needs to be re-synced again.
 Future<List<Tuple2<AssetPathEntity, String>>>
 getDeviceFolderWithCountAndCoverID() async {
   final List<Tuple2<AssetPathEntity, String>> result = [];
@@ -133,14 +126,11 @@ Future<List<LocalPathAsset>> getAllLocalAssets({bool? needsTitle}) async {
   return localPathAssets;
 }
 
-/// returns a list of AssetPathEntity with relevant filter operations.
-/// [needTitle] impacts the performance for fetching the actual [AssetEntity]
-/// in iOS. Same is true for [containsModifiedPath]
 Future<List<AssetPathEntity>> _getGalleryList({
   final int? updateFromTime,
   final int? updateToTime,
+  // Fetching asset titles or modified-path data is expensive on iOS.
   final bool containsModifiedPath = false,
-  // in iOS fetching the AssetEntity title impacts performance
   final bool needsTitle = true,
   final OrderOption? orderOption,
 }) async {
@@ -201,55 +191,27 @@ Future<List<AssetEntity>> _getAllAssetLists(AssetPathEntity pathEntity) async {
   return result;
 }
 
-/// Safely extracts millisecondsSinceEpoch from DateTime, throwing InvalidDateTimeError if invalid
-int _safeGetMilliseconds(
-  DateTime dateTime,
-  String assetId,
-  String? assetTitle,
-  String label,
-) {
-  try {
-    return dateTime.millisecondsSinceEpoch;
-  } on RangeError catch (e) {
-    throw InvalidDateTimeError(
-      assetId: assetId,
-      assetTitle: assetTitle,
-      field: label,
-      originalError: e.message ?? e.toString(),
-    );
-  }
-}
-
-// review: do we need to run this inside compute, after making File.FromAsset
-// sync. If yes, update the method documentation with reason.
-Future<Tuple2<Set<String>, List<EnteFile>>> _getLocalIDsAndFilesFromAssets(
+// Runs in a worker isolate because a device folder can contain thousands of
+// assets and this loop constructs metadata for the full folder. Re-benchmark
+// large imports before moving this work onto the UI isolate.
+Tuple2<Set<String>, List<EnteFile>> _getLocalIDsAndFilesFromAssets(
   Map<String, dynamic> args,
-) async {
+) {
   final pathEntity = args["pathEntity"] as AssetPathEntity;
   final assetList = args["assetList"];
-  final fromTime = args["fromTime"];
+  final fromTime = args["fromTime"] as int;
   final alreadySeenLocalIDs = args["alreadySeenLocalIDs"] as Set<String>;
   final List<EnteFile> files = [];
   final Set<String> localIDs = {};
   for (AssetEntity entity in assetList) {
     localIDs.add(entity.id);
-    final createMs = _safeGetMilliseconds(
-      entity.createDateTime,
-      entity.id,
-      entity.title,
-      'createDateTime',
+    final bool assetCreatedOrUpdatedAfterGivenTime = isAssetAtOrAfterSyncCutoff(
+      entity,
+      fromTime,
     );
-    final modifiedMs = _safeGetMilliseconds(
-      entity.modifiedDateTime,
-      entity.id,
-      entity.title,
-      'modifiedDateTime',
-    );
-    final bool assetCreatedOrUpdatedAfterGivenTime =
-        max(createMs, modifiedMs) >= (fromTime ~/ 1000);
     if (!alreadySeenLocalIDs.contains(entity.id) &&
         assetCreatedOrUpdatedAfterGivenTime) {
-      final file = await EnteFile.fromAsset(pathEntity.name, entity);
+      final file = fileFromAsset(pathEntity.name, entity);
       files.add(file);
     }
   }

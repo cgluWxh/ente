@@ -55,40 +55,6 @@ void main() {
     expect(find.text('Secondary'), findsOneWidget);
   });
 
-  testWidgets('BottomSheetComponent centers illustration message', (
-    tester,
-  ) async {
-    await tester.pumpWidget(
-      _wrap(
-        const BottomSheetComponent(
-          title: 'Title',
-          message: 'Centered message',
-          illustration: SizedBox(
-            key: ValueKey('warning-illustration'),
-            width: 80,
-            height: 80,
-          ),
-        ),
-      ),
-    );
-
-    expect(find.byKey(const ValueKey('warning-illustration')), findsOneWidget);
-    expect(find.text('Centered message'), findsOneWidget);
-    final illustrationSlot = find.ancestor(
-      of: find.byKey(const ValueKey('warning-illustration')),
-      matching: find.byType(FittedBox),
-    );
-    expect(illustrationSlot, findsOneWidget);
-    expect(tester.getSize(illustrationSlot), const Size(180, 109));
-    expect(
-      tester.getSize(find.byKey(const ValueKey('warning-illustration'))),
-      const Size(80, 80),
-    );
-
-    final message = tester.widget<Text>(find.text('Centered message'));
-    expect(message.textAlign, TextAlign.center);
-  });
-
   testWidgets('BottomSheetComponent respects explicit action spacing', (
     tester,
   ) async {
@@ -320,6 +286,40 @@ void main() {
       find.byType(AnimatedPadding),
     );
     expect(animatedPadding.padding, const EdgeInsets.only(bottom: 120));
+  });
+
+  testWidgets('BottomSheetComponent passes initial scrollable size', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _wrap(
+        const BottomSheetComponent(
+          content: SizedBox(key: ValueKey('scrollable-content')),
+          isScrollable: true,
+          initialChildSize: 0.7,
+        ),
+      ),
+    );
+    final sheet = tester.widget<DraggableScrollableSheet>(
+      find.byType(DraggableScrollableSheet),
+    );
+    expect(sheet.initialChildSize, 0.7);
+  });
+
+  testWidgets('BottomSheetComponent keeps default layout non-scrollable', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _wrap(
+        const BottomSheetComponent(
+          content: SizedBox(key: ValueKey('plain-content')),
+          initialChildSize: 0.7,
+        ),
+      ),
+    );
+    expect(find.byType(DraggableScrollableSheet), findsNothing);
+    expect(find.byType(Padding), findsWidgets);
+    expect(find.byKey(const ValueKey('plain-content')), findsOneWidget);
   });
 }
 

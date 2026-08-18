@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:ente_components/ente_components.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -204,10 +206,63 @@ class _CatalogHomeState extends State<CatalogHome> {
         previewBuilder: (_) => const _MenuItemPreview(),
       ),
       CatalogSection(
+        title: 'Popup menu',
+        icon: HugeIcons.strokeRoundedMoreVertical,
+        components: const [
+          'Sort menu',
+          'Leading icons',
+          'Trailing icons',
+          'Label icon',
+          'Full combo',
+          'Active state',
+          'All cases',
+        ],
+        previewBuilder: (_) => const _PopupMenuPreview(),
+      ),
+      CatalogSection(
+        title: 'Banner',
+        icon: HugeIcons.strokeRoundedAlertCircle,
+        components: const [
+          'Failure',
+          'Informative',
+          'Success',
+          'Warning',
+          'Neutral',
+          'Custom leading',
+          'Custom trailing',
+        ],
+        previewBuilder: (_) => const _BannerPreview(),
+      ),
+      CatalogSection(
+        title: 'Toast',
+        icon: HugeIcons.strokeRoundedCheckmarkCircle02,
+        components: const [
+          'States',
+          'Title only',
+          'Custom leading',
+          'Custom trailing',
+          'Short vs long',
+        ],
+        previewBuilder: (_) => const _ToastPreview(),
+      ),
+      CatalogSection(
         title: 'Buttons',
         icon: HugeIcons.strokeRoundedCursorPointer02,
         components: const ['Button', 'Icon button'],
         previewBuilder: (_) => const _ButtonMatrix(),
+      ),
+      CatalogSection(
+        title: 'Floating action button',
+        icon: HugeIcons.strokeRoundedAdd01,
+        components: const [
+          'Primary',
+          'Secondary',
+          'Icon',
+          'Medium',
+          'Medium with icon',
+        ],
+        previewBuilder: (_) => const SizedBox.shrink(),
+        routeBuilder: _buildFABDemo,
       ),
       CatalogSection(
         title: 'Bottom sheets',
@@ -238,6 +293,12 @@ class _CatalogHomeState extends State<CatalogHome> {
           'Max length',
         ],
         previewBuilder: (_) => const _TextInputPreview(),
+      ),
+      CatalogSection(
+        title: 'PIN input',
+        icon: HugeIcons.strokeRoundedLockPassword,
+        components: const ['Six-digit OTP', 'Obscured PIN', 'Error state'],
+        previewBuilder: (_) => const _PinInputPreview(),
       ),
       CatalogSection(
         title: 'Selection controls',
@@ -305,6 +366,17 @@ Widget _buildHeaderAppBarDemo(
   ValueChanged<ThemeMode> onThemeModeChanged,
 ) {
   return HeaderAppBarDemoPage(
+    themeMode: themeMode,
+    onThemeModeChanged: onThemeModeChanged,
+  );
+}
+
+Widget _buildFABDemo(
+  BuildContext context,
+  ThemeMode themeMode,
+  ValueChanged<ThemeMode> onThemeModeChanged,
+) {
+  return FABDemoPage(
     themeMode: themeMode,
     onThemeModeChanged: onThemeModeChanged,
   );
@@ -1106,6 +1178,289 @@ class _TypeSample extends StatelessWidget {
   }
 }
 
+const _bannerPreviewSpecs = [
+  _BannerPreviewSpec(
+    state: BannerComponentState.failure,
+    title: 'Failure!',
+    subtitle: 'Some subtext that describes the failure',
+  ),
+  _BannerPreviewSpec(
+    state: BannerComponentState.informative,
+    title: 'Informative!',
+    subtitle: 'Some subtext that describes the info',
+  ),
+  _BannerPreviewSpec(
+    state: BannerComponentState.success,
+    title: 'Success!',
+    subtitle: 'Some subtext that describes the success',
+  ),
+  _BannerPreviewSpec(
+    state: BannerComponentState.warning,
+    title: 'Warning!',
+    subtitle: 'Some subtext that describes the warning',
+  ),
+  _BannerPreviewSpec(
+    state: BannerComponentState.neutral,
+    title: 'Neutral!',
+    subtitle: 'Some subtext that describes the neutral text',
+  ),
+];
+
+class _BannerPreviewSpec {
+  const _BannerPreviewSpec({
+    required this.state,
+    required this.title,
+    required this.subtitle,
+  });
+
+  final BannerComponentState state;
+  final String title;
+  final String subtitle;
+}
+
+class _BannerPreview extends StatelessWidget {
+  const _BannerPreview();
+
+  @override
+  Widget build(BuildContext context) {
+    return _CatalogPreviewList(
+      children: [
+        _CatalogPreviewGroup(
+          title: 'States',
+          child: Column(
+            children: [
+              for (
+                var index = 0;
+                index < _bannerPreviewSpecs.length;
+                index++
+              ) ...[
+                _BannerStatePreview(spec: _bannerPreviewSpecs[index]),
+                if (index != _bannerPreviewSpecs.length - 1)
+                  const SizedBox(height: Spacing.md),
+              ],
+            ],
+          ),
+        ),
+        _CatalogPreviewGroup(
+          title: 'Custom leading',
+          child: BannerComponent(
+            title: 'Syncing backup',
+            subtitle: 'Preparing secure upload',
+            state: BannerComponentState.informative,
+            leadingWidget: const _BannerLoadingLeading(),
+            onTap: () {},
+          ),
+        ),
+        _CatalogPreviewGroup(
+          title: 'Custom trailing',
+          child: BannerComponent(
+            title: 'Dismissible info',
+            subtitle: 'Some subtext with a custom trailing icon',
+            state: BannerComponentState.informative,
+            trailingWidget: const _CatalogHugeIcon(
+              HugeIcons.strokeRoundedCancel01,
+              size: IconSizes.small,
+            ),
+            onTap: () {},
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _BannerLoadingLeading extends StatelessWidget {
+  const _BannerLoadingLeading();
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.componentColors;
+
+    return SizedBox(
+      width: IconSizes.small,
+      height: IconSizes.small,
+      child: CircularProgressIndicator(color: colors.blue, strokeWidth: 2),
+    );
+  }
+}
+
+class _BannerStatePreview extends StatelessWidget {
+  const _BannerStatePreview({required this.spec});
+
+  final _BannerPreviewSpec spec;
+
+  @override
+  Widget build(BuildContext context) {
+    return BannerComponent(
+      title: spec.title,
+      subtitle: spec.subtitle,
+      state: spec.state,
+      onTap: () {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('${spec.title} tapped')));
+      },
+    );
+  }
+}
+
+const _toastStateSpecs = [
+  _ToastStateSpec(
+    state: BannerComponentState.failure,
+    label: 'Failure',
+    title: 'Failure!',
+    subtitle: 'Some subtext that describes the failure',
+  ),
+  _ToastStateSpec(
+    state: BannerComponentState.informative,
+    label: 'Informative',
+    title: 'Informative!',
+    subtitle: 'Some subtext that describes the info',
+  ),
+  _ToastStateSpec(
+    state: BannerComponentState.success,
+    label: 'Success',
+    title: 'Success!',
+    subtitle: 'Some subtext that describes the success',
+  ),
+  _ToastStateSpec(
+    state: BannerComponentState.warning,
+    label: 'Warning',
+    title: 'Warning!',
+    subtitle: 'Some subtext that describes the warning',
+  ),
+  _ToastStateSpec(
+    state: BannerComponentState.neutral,
+    label: 'Neutral',
+    title: 'Neutral!',
+    subtitle: 'Some subtext that describes the neutral text',
+  ),
+];
+
+class _ToastStateSpec {
+  const _ToastStateSpec({
+    required this.state,
+    required this.label,
+    required this.title,
+    required this.subtitle,
+  });
+
+  final BannerComponentState state;
+  final String label;
+  final String title;
+  final String subtitle;
+}
+
+class _ToastPreview extends StatelessWidget {
+  const _ToastPreview();
+
+  @override
+  Widget build(BuildContext context) {
+    return _CatalogPreviewList(
+      children: [
+        _CatalogPreviewGroup(
+          title: 'States (tap to show)',
+          child: Column(
+            children: [
+              for (var index = 0; index < _toastStateSpecs.length; index++) ...[
+                _ToastTriggerButton(
+                  label: 'Show ${_toastStateSpecs[index].label.toLowerCase()}',
+                  onTap: () => showToastComponent(
+                    context,
+                    _toastStateSpecs[index].title,
+                    subtitle: _toastStateSpecs[index].subtitle,
+                    state: _toastStateSpecs[index].state,
+                  ),
+                ),
+                if (index != _toastStateSpecs.length - 1)
+                  const SizedBox(height: Spacing.sm),
+              ],
+            ],
+          ),
+        ),
+        _CatalogPreviewGroup(
+          title: 'Title only',
+          child: _ToastTriggerButton(
+            label: 'Show title-only toast',
+            onTap: () => showToastComponent(context, 'Saved to your library'),
+          ),
+        ),
+        _CatalogPreviewGroup(
+          title: 'Custom leading (spinner)',
+          child: _ToastTriggerButton(
+            label: 'Show custom leading',
+            onTap: () => showToastComponent(
+              context,
+              'Syncing your data',
+              subtitle: 'Preparing secure upload',
+              state: BannerComponentState.informative,
+              leadingWidget: const _BannerLoadingLeading(),
+            ),
+          ),
+        ),
+        _CatalogPreviewGroup(
+          title: 'Custom trailing',
+          child: _ToastTriggerButton(
+            label: 'Show custom trailing',
+            onTap: () => showToastComponent(
+              context,
+              'Item moved to trash',
+              subtitle: 'Tap the icon to undo',
+              state: BannerComponentState.neutral,
+              trailingWidget: const _CatalogHugeIcon(
+                HugeIcons.strokeRoundedDelete02,
+                size: IconSizes.small,
+              ),
+            ),
+          ),
+        ),
+        _CatalogPreviewGroup(
+          title: 'Duration (short vs long)',
+          child: Column(
+            children: [
+              _ToastTriggerButton(
+                label: 'Short (2s)',
+                onTap: () => showToastComponent(
+                  context,
+                  'Short toast (2s)',
+                  state: BannerComponentState.informative,
+                  duration: const Duration(seconds: 2),
+                ),
+              ),
+              const SizedBox(height: Spacing.sm),
+              _ToastTriggerButton(
+                label: 'Long (default 4s)',
+                onTap: () => showToastComponent(
+                  context,
+                  'Long toast (4s)',
+                  state: BannerComponentState.informative,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ToastTriggerButton extends StatelessWidget {
+  const _ToastTriggerButton({required this.label, required this.onTap});
+
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return ButtonComponent(
+      variant: ButtonComponentVariant.secondary,
+      label: label,
+      shouldSurfaceExecutionStates: false,
+      onTap: onTap,
+    );
+  }
+}
+
 class _ButtonMatrix extends StatelessWidget {
   const _ButtonMatrix();
 
@@ -1122,6 +1477,234 @@ class _ButtonMatrix extends StatelessWidget {
           child: _IconButtonMatrix(),
         ),
       ],
+    );
+  }
+}
+
+class FABDemoPage extends StatefulWidget {
+  const FABDemoPage({
+    super.key,
+    required this.themeMode,
+    required this.onThemeModeChanged,
+  });
+
+  final ThemeMode themeMode;
+  final ValueChanged<ThemeMode> onThemeModeChanged;
+
+  @override
+  State<FABDemoPage> createState() => _FABDemoPageState();
+}
+
+class _FABDemoPageState extends State<FABDemoPage> {
+  late ThemeMode _themeMode = widget.themeMode;
+
+  void _setThemeMode(ThemeMode mode) {
+    setState(() => _themeMode = mode);
+    widget.onThemeModeChanged(mode);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.componentColors;
+    return Scaffold(
+      body: AppBarComponent(
+        title: 'Floating action button',
+        subtitle: 'Primary, Secondary, Icon, Medium',
+        onBack: () => Navigator.of(context).pop(),
+        actions: [
+          _CatalogThemeCycleButton(
+            themeMode: _themeMode,
+            onChanged: _setThemeMode,
+          ),
+        ],
+        slivers: [
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(
+              Spacing.lg,
+              Spacing.xs,
+              Spacing.lg,
+              Spacing.lg,
+            ),
+            sliver: SliverToBoxAdapter(
+              child: _FABDemoList(
+                themeMode: _themeMode,
+                onThemeModeChanged: _setThemeMode,
+              ),
+            ),
+          ),
+        ],
+      ),
+      backgroundColor: colors.backgroundBase,
+    );
+  }
+}
+
+class _FABDemoList extends StatelessWidget {
+  const _FABDemoList({
+    required this.themeMode,
+    required this.onThemeModeChanged,
+  });
+
+  final ThemeMode themeMode;
+  final ValueChanged<ThemeMode> onThemeModeChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return MenuGroupComponent(
+      items: [
+        _FABDemoLink(
+          title: 'Primary medium',
+          variant: FABComponentVariant.primary,
+          hasIcon: false,
+          label: 'Add',
+          themeMode: themeMode,
+          onThemeModeChanged: onThemeModeChanged,
+        ),
+        _FABDemoLink(
+          title: 'Primary medium with icon',
+          variant: FABComponentVariant.primary,
+          hasIcon: true,
+          label: 'Add',
+          themeMode: themeMode,
+          onThemeModeChanged: onThemeModeChanged,
+        ),
+        _FABDemoLink(
+          title: 'Primary icon',
+          variant: FABComponentVariant.primary,
+          hasIcon: true,
+          themeMode: themeMode,
+          onThemeModeChanged: onThemeModeChanged,
+        ),
+        _FABDemoLink(
+          title: 'Secondary medium',
+          variant: FABComponentVariant.secondary,
+          hasIcon: false,
+          label: 'Add',
+          themeMode: themeMode,
+          onThemeModeChanged: onThemeModeChanged,
+        ),
+        _FABDemoLink(
+          title: 'Secondary medium with icon',
+          variant: FABComponentVariant.secondary,
+          hasIcon: true,
+          label: 'Add',
+          themeMode: themeMode,
+          onThemeModeChanged: onThemeModeChanged,
+        ),
+        _FABDemoLink(
+          title: 'Secondary icon',
+          variant: FABComponentVariant.secondary,
+          hasIcon: true,
+          themeMode: themeMode,
+          onThemeModeChanged: onThemeModeChanged,
+        ),
+      ],
+    );
+  }
+}
+
+class _FABDemoLink extends StatelessWidget {
+  const _FABDemoLink({
+    required this.title,
+    required this.variant,
+    required this.hasIcon,
+    this.label,
+    required this.themeMode,
+    required this.onThemeModeChanged,
+  });
+
+  final String title;
+  final FABComponentVariant variant;
+  final bool hasIcon;
+  final String? label;
+  final ThemeMode themeMode;
+  final ValueChanged<ThemeMode> onThemeModeChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return MenuComponent(
+      title: title,
+      trailing: const _CatalogHugeIcon(
+        HugeIcons.strokeRoundedArrowRight02,
+        size: IconSizes.small,
+      ),
+      onTap: () => Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => _FABDemoSubPage(
+            title: title,
+            variant: variant,
+            hasIcon: hasIcon,
+            label: label,
+            themeMode: themeMode,
+            onThemeModeChanged: onThemeModeChanged,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _FABDemoSubPage extends StatefulWidget {
+  const _FABDemoSubPage({
+    required this.title,
+    required this.variant,
+    required this.hasIcon,
+    this.label,
+    required this.themeMode,
+    required this.onThemeModeChanged,
+  });
+
+  final String title;
+  final FABComponentVariant variant;
+  final bool hasIcon;
+  final String? label;
+  final ThemeMode themeMode;
+  final ValueChanged<ThemeMode> onThemeModeChanged;
+
+  @override
+  State<_FABDemoSubPage> createState() => _FABDemoSubPageState();
+}
+
+class _FABDemoSubPageState extends State<_FABDemoSubPage> {
+  late ThemeMode _themeMode = widget.themeMode;
+
+  void _setThemeMode(ThemeMode mode) {
+    setState(() => _themeMode = mode);
+    widget.onThemeModeChanged(mode);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.componentColors;
+    return Scaffold(
+      body: AppBarComponent(
+        title: widget.title,
+        subtitle: 'Floating action button',
+        onBack: () => Navigator.of(context).pop(),
+        actions: [
+          _CatalogThemeCycleButton(
+            themeMode: _themeMode,
+            onChanged: _setThemeMode,
+          ),
+        ],
+        slivers: const [],
+      ),
+      floatingActionButton: Padding(
+        padding: const EdgeInsets.only(bottom: 4),
+        child: FABComponent(
+          icon: widget.hasIcon
+              ? const _CatalogHugeIcon(
+                  HugeIcons.strokeRoundedAdd01,
+                  size: IconSizes.small,
+                )
+              : null,
+          label: widget.label,
+          variant: widget.variant,
+          onTap: () {},
+        ),
+      ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
+      backgroundColor: colors.backgroundBase,
     );
   }
 }
@@ -2123,6 +2706,77 @@ class _TextInputPreviewIcon extends StatelessWidget {
   }
 }
 
+class _PinInputPreview extends StatefulWidget {
+  const _PinInputPreview();
+
+  @override
+  State<_PinInputPreview> createState() => _PinInputPreviewState();
+}
+
+class _PinInputPreviewState extends State<_PinInputPreview> {
+  late final TextEditingController _otpController;
+  late final TextEditingController _pinController;
+  late final TextEditingController _errorController;
+
+  @override
+  void initState() {
+    super.initState();
+    _otpController = TextEditingController(text: '888');
+    _pinController = TextEditingController(text: '12');
+    _errorController = TextEditingController(text: '8051');
+  }
+
+  @override
+  void dispose() {
+    _otpController.dispose();
+    _pinController.dispose();
+    _errorController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _CatalogPreviewList(
+      children: [
+        _CatalogPreviewGroup(
+          title: 'Six-digit OTP',
+          child: Center(
+            child: PinInputComponent(
+              controller: _otpController,
+              autofocus: true,
+              autofillHints: const [AutofillHints.oneTimeCode],
+              semanticLabel: 'Six-digit one-time code',
+            ),
+          ),
+        ),
+        _CatalogPreviewGroup(
+          title: 'Obscured PIN',
+          child: Center(
+            child: PinInputComponent(
+              length: 4,
+              controller: _pinController,
+              obscureText: true,
+              semanticLabel: 'Four-digit PIN',
+            ),
+          ),
+        ),
+        _CatalogPreviewGroup(
+          title: 'Error state',
+          child: Center(
+            child: PinInputComponent(
+              length: 4,
+              controller: _errorController,
+              obscureText: true,
+              isError: true,
+              semanticLabel: 'Incorrect four-digit PIN',
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _HeaderImage extends StatelessWidget {
   const _HeaderImage();
 
@@ -2594,6 +3248,363 @@ class _SelectionPreviewState extends State<_SelectionPreview> {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _PopupMenuPreview extends StatefulWidget {
+  const _PopupMenuPreview();
+
+  @override
+  State<_PopupMenuPreview> createState() => _PopupMenuPreviewState();
+}
+
+class _PopupMenuPreviewState extends State<_PopupMenuPreview> {
+  String _lastSelection = 'None';
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.componentColors;
+
+    return _CatalogPreviewList(
+      children: [
+        _CatalogPreviewGroup(
+          title: 'Interactive menu triggers',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Wrap(
+                spacing: Spacing.md,
+                runSpacing: Spacing.md,
+                children: [
+                  _PopupMenuTrigger(
+                    optionsBuilder: _sortOptions,
+                    onSelected: _handleSelected,
+                  ),
+                  _PopupMenuTrigger(
+                    optionsBuilder: _fileOptions,
+                    onSelected: _handleSelected,
+                  ),
+                  _PopupMenuTrigger(
+                    optionsBuilder: _viewOptions,
+                    onSelected: _handleSelected,
+                  ),
+                  _PopupMenuTrigger(
+                    optionsBuilder: _fullOptions,
+                    onSelected: _handleSelected,
+                  ),
+                  _PopupMenuTrigger(
+                    optionsBuilder: _activeOptions,
+                    onSelected: _handleSelected,
+                  ),
+                  _PopupMenuTrigger(
+                    optionsBuilder: _allCasesOptions,
+                    onSelected: _handleSelected,
+                  ),
+                ],
+              ),
+              const SizedBox(height: Spacing.md),
+              Text(
+                'Last selected: $_lastSelection',
+                style: TextStyles.body.copyWith(color: colors.textLight),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _handleSelected(String value) async {
+    setState(() => _lastSelection = value);
+  }
+
+  List<EntePopupMenuOption<String>> _sortOptions(BuildContext context) {
+    final colors = context.componentColors;
+    return [
+      EntePopupMenuOption(
+        value: 'sort-name',
+        label: 'Name',
+        secondaryLabel: 'A-Z',
+        secondaryTrailingWidget: _CatalogHugeIcon(
+          HugeIcons.strokeRoundedArrowUp02,
+          color: colors.textLight,
+          size: IconSizes.tiny,
+        ),
+      ),
+      const EntePopupMenuOption(value: 'sort-created', label: 'Created'),
+      const EntePopupMenuOption(value: 'sort-newest', label: 'Newest'),
+      const EntePopupMenuOption(
+        value: 'sort-updated',
+        label: 'Updated',
+        showDivider: false,
+      ),
+    ];
+  }
+
+  List<EntePopupMenuOption<String>> _fileOptions(BuildContext context) {
+    final colors = context.componentColors;
+    return [
+      const EntePopupMenuOption(
+        value: 'download',
+        label: 'Download',
+        leadingWidget: _CatalogHugeIcon(
+          HugeIcons.strokeRoundedDownload01,
+          size: IconSizes.small,
+        ),
+      ),
+      const EntePopupMenuOption(
+        value: 'share',
+        label: 'Share',
+        leadingWidget: _CatalogHugeIcon(
+          HugeIcons.strokeRoundedShare08,
+          size: IconSizes.small,
+        ),
+      ),
+      const EntePopupMenuOption(
+        value: 'copy-link',
+        label: 'Copy link',
+        leadingWidget: _CatalogHugeIcon(
+          HugeIcons.strokeRoundedCopy01,
+          size: IconSizes.small,
+        ),
+      ),
+      EntePopupMenuOption(
+        value: 'delete',
+        label: 'Delete',
+        labelColor: colors.warning,
+        leadingWidget: _CatalogHugeIcon(
+          HugeIcons.strokeRoundedDelete02,
+          color: colors.warning,
+          size: IconSizes.small,
+        ),
+        showDivider: false,
+      ),
+    ];
+  }
+
+  List<EntePopupMenuOption<String>> _viewOptions(BuildContext context) {
+    final colors = context.componentColors;
+    return [
+      EntePopupMenuOption(
+        value: 'grid',
+        label: 'Grid',
+        trailingWidget: _CatalogHugeIcon(
+          HugeIcons.strokeRoundedGridView,
+          color: colors.textLight,
+          size: IconSizes.tiny,
+        ),
+      ),
+      EntePopupMenuOption(
+        value: 'list',
+        label: 'List',
+        trailingWidget: _CatalogHugeIcon(
+          HugeIcons.strokeRoundedMenu01,
+          color: colors.textLight,
+          size: IconSizes.tiny,
+        ),
+      ),
+      EntePopupMenuOption(
+        value: 'upload',
+        label: 'Upload',
+        trailingWidget: _CatalogHugeIcon(
+          HugeIcons.strokeRoundedImageUpload,
+          color: colors.textLight,
+          size: IconSizes.tiny,
+        ),
+        showDivider: false,
+      ),
+    ];
+  }
+
+  List<EntePopupMenuOption<String>> _fullOptions(BuildContext context) {
+    final colors = context.componentColors;
+    return [
+      EntePopupMenuOption(
+        value: 'created-ascending',
+        label: 'Created',
+        secondaryLabel: 'A-Z',
+        leadingWidget: _CatalogHugeIcon(
+          HugeIcons.strokeRoundedAdd01,
+          color: colors.textLight,
+          size: IconSizes.small,
+        ),
+        secondaryTrailingWidget: _CatalogHugeIcon(
+          HugeIcons.strokeRoundedArrowUp02,
+          color: colors.textLight,
+          size: IconSizes.tiny,
+        ),
+        trailingWidget: _CatalogHugeIcon(
+          HugeIcons.strokeRoundedAdd01,
+          color: colors.textLight,
+          size: IconSizes.tiny,
+        ),
+      ),
+      EntePopupMenuOption(
+        value: 'updated-descending',
+        label: 'Updated',
+        secondaryLabel: 'Z-A',
+        leadingWidget: _CatalogHugeIcon(
+          HugeIcons.strokeRoundedRefresh,
+          color: colors.textLight,
+          size: IconSizes.small,
+        ),
+        secondaryTrailingWidget: _CatalogHugeIcon(
+          HugeIcons.strokeRoundedArrowUp02,
+          color: colors.textLight,
+          size: IconSizes.tiny,
+        ),
+        activeTrailingWidget: _CatalogHugeIcon(
+          HugeIcons.strokeRoundedCheckmarkCircle02,
+          color: colors.primary,
+          size: IconSizes.tiny,
+        ),
+        isActive: true,
+      ),
+      EntePopupMenuOption(
+        value: 'storage-info',
+        label: 'Storage',
+        leadingWidget: _CatalogHugeIcon(
+          HugeIcons.strokeRoundedDatabase,
+          color: colors.textLight,
+          size: IconSizes.small,
+        ),
+        trailingWidget: Text(
+          '2 TB',
+          style: TextStyles.mini.copyWith(color: colors.textLight),
+        ),
+        showDivider: false,
+      ),
+    ];
+  }
+
+  List<EntePopupMenuOption<String>> _activeOptions(BuildContext context) {
+    final colors = context.componentColors;
+    final activeSortIcon = _CatalogHugeIcon(
+      HugeIcons.strokeRoundedArrowUp02,
+      color: colors.primary,
+      size: IconSizes.tiny,
+    );
+
+    return [
+      EntePopupMenuOption(
+        value: 'active-name',
+        label: 'Name',
+        secondaryLabel: 'A-Z',
+        activeTrailingWidget: activeSortIcon,
+        isActive: true,
+      ),
+      EntePopupMenuOption(
+        value: 'inactive-created',
+        label: 'Created',
+        activeTrailingWidget: activeSortIcon,
+      ),
+      EntePopupMenuOption(
+        value: 'inactive-updated',
+        label: 'Updated',
+        activeTrailingWidget: activeSortIcon,
+      ),
+      EntePopupMenuOption(
+        value: 'inactive-size',
+        label: 'Size',
+        activeTrailingWidget: activeSortIcon,
+        showDivider: false,
+      ),
+    ];
+  }
+
+  List<EntePopupMenuOption<String>> _allCasesOptions(BuildContext context) {
+    final colors = context.componentColors;
+    return [
+      const EntePopupMenuOption(value: 'plain', label: 'Plain label'),
+      const EntePopupMenuOption(
+        value: 'secondary-label',
+        label: 'Name',
+        secondaryLabel: 'A-Z',
+      ),
+      EntePopupMenuOption(
+        value: 'label-icon',
+        label: 'Name',
+        secondaryLabel: 'A-Z',
+        secondaryTrailingWidget: _CatalogHugeIcon(
+          HugeIcons.strokeRoundedArrowUp02,
+          color: colors.textLight,
+          size: IconSizes.tiny,
+        ),
+      ),
+      const EntePopupMenuOption(
+        value: 'leading',
+        label: 'Download',
+        leadingWidget: _CatalogHugeIcon(
+          HugeIcons.strokeRoundedDownload01,
+          size: IconSizes.small,
+        ),
+      ),
+      EntePopupMenuOption(
+        value: 'trailing',
+        label: 'Grid',
+        trailingWidget: _CatalogHugeIcon(
+          HugeIcons.strokeRoundedGridView,
+          color: colors.textLight,
+          size: IconSizes.tiny,
+        ),
+      ),
+      EntePopupMenuOption(
+        value: 'active',
+        label: 'Updated',
+        secondaryLabel: 'Selected',
+        leadingWidget: _CatalogHugeIcon(
+          HugeIcons.strokeRoundedRefresh,
+          color: colors.textLight,
+          size: IconSizes.small,
+        ),
+        activeTrailingWidget: _CatalogHugeIcon(
+          HugeIcons.strokeRoundedCheckmarkCircle02,
+          color: colors.primary,
+          size: IconSizes.tiny,
+        ),
+        isActive: true,
+      ),
+      EntePopupMenuOption(
+        value: 'inactive-reserved',
+        label: 'Created',
+        secondaryLabel: 'Not selected',
+        activeTrailingWidget: _CatalogHugeIcon(
+          HugeIcons.strokeRoundedCheckmarkCircle02,
+          color: colors.primary,
+          size: IconSizes.tiny,
+        ),
+      ),
+      EntePopupMenuOption(
+        value: 'destructive',
+        label: 'Delete',
+        labelColor: colors.warning,
+        leadingWidget: _CatalogHugeIcon(
+          HugeIcons.strokeRoundedDelete02,
+          color: colors.warning,
+          size: IconSizes.small,
+        ),
+        showDivider: false,
+      ),
+    ];
+  }
+}
+
+class _PopupMenuTrigger extends StatelessWidget {
+  const _PopupMenuTrigger({
+    required this.optionsBuilder,
+    required this.onSelected,
+  });
+
+  final List<EntePopupMenuOption<String>> Function(BuildContext context)
+  optionsBuilder;
+  final FutureOr<void> Function(String value) onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return EntePopupMenuButton<String>(
+      optionsBuilder: () => optionsBuilder(context),
+      onSelected: onSelected,
     );
   }
 }

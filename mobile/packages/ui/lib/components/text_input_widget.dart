@@ -18,8 +18,6 @@ class TextInputWidget extends StatefulWidget {
   final bool? autoFocus;
   final int? maxLength;
 
-  ///TextInputWidget will listen to this notifier and executes onSubmit when
-  ///notified.
   final ValueNotifier? submitNotifier;
   final bool alwaysShowSuccessState;
   final bool showOnlyLoadingState;
@@ -69,8 +67,6 @@ class _TextInputWidgetState extends State<TextInputWidget> {
   final _debouncer = Debouncer(const Duration(milliseconds: 300));
   late final ValueNotifier<bool> _obscureTextNotifier;
 
-  ///This is to pass if the TextInputWidget is in a dialog and an error is
-  ///thrown in executing onSubmit by passing it as arg in Navigator.pop()
   Exception? _exception;
   bool _incorrectPassword = false;
   @override
@@ -229,9 +225,11 @@ class _TextInputWidgetState extends State<TextInputWidget> {
   void _onSubmit() async {
     _debouncer.run(
       () => Future(() {
-        setState(() {
-          executionState = ExecutionState.inProgress;
-        });
+        if (mounted) {
+          setState(() {
+            executionState = ExecutionState.inProgress;
+          });
+        }
       }),
     );
     if (widget.shouldUnfocusOnCancelOrSubmit) {
@@ -240,6 +238,13 @@ class _TextInputWidgetState extends State<TextInputWidget> {
     try {
       await widget.onSubmit!.call(_textController.text);
     } catch (e) {
+      if (!mounted) {
+        _debouncer.cancelDebounce();
+        if (!widget.popNavAfterSubmission) {
+          rethrow;
+        }
+        return;
+      }
       executionState = ExecutionState.error;
       _debouncer.cancelDebounce();
       _exception = e as Exception;
@@ -251,6 +256,10 @@ class _TextInputWidgetState extends State<TextInputWidget> {
         rethrow;
       }
     }
+    if (!mounted) {
+      _debouncer.cancelDebounce();
+      return;
+    }
     widget.alwaysShowSuccessState && _debouncer.isActive()
         ? executionState = ExecutionState.successful
         : null;
@@ -259,12 +268,11 @@ class _TextInputWidgetState extends State<TextInputWidget> {
       setState(() {});
     }
 
-    // when the time taken by widget.onSubmit is approximately equal to the debounce
-    // time, the callback is getting executed when/after the if condition
-    // below is executing/executed which results in execution state stuck at
-    // idle state. This Future is for delaying the execution of the if
-    // condition so that the calback in the debouncer finishes execution before.
+    // Let the debounced callback finish before checking its execution state.
     await Future.delayed(const Duration(milliseconds: 5));
+    if (!mounted) {
+      return;
+    }
     if (executionState == ExecutionState.inProgress ||
         executionState == ExecutionState.error) {
       if (executionState == ExecutionState.inProgress) {
@@ -284,6 +292,9 @@ class _TextInputWidgetState extends State<TextInputWidget> {
                       : 0,
                 ),
                 () {
+                  if (!mounted) {
+                    return;
+                  }
                   widget.popNavAfterSubmission
                       ? _popNavigatorStack(context)
                       : null;
@@ -302,10 +313,12 @@ class _TextInputWidgetState extends State<TextInputWidget> {
         setState(() {
           executionState = ExecutionState.idle;
           widget.popNavAfterSubmission
-              ? Future.delayed(
-                  const Duration(seconds: 0),
-                  () => _popNavigatorStack(context, e: _exception),
-                )
+              ? Future.delayed(const Duration(seconds: 0), () {
+                  if (!mounted) {
+                    return;
+                  }
+                  _popNavigatorStack(context, e: _exception);
+                })
               : null;
         });
       }
@@ -313,7 +326,12 @@ class _TextInputWidgetState extends State<TextInputWidget> {
       if (widget.popNavAfterSubmission) {
         Future.delayed(
           Duration(seconds: widget.alwaysShowSuccessState ? 1 : 0),
-          () => _popNavigatorStack(context),
+          () {
+            if (!mounted) {
+              return;
+            }
+            _popNavigatorStack(context);
+          },
         );
       }
     }

@@ -1,20 +1,22 @@
 import "dart:async";
 import "dart:io";
 
+import "package:ente_strings/ente_strings.dart";
+import "package:ente_ui/components/loading_widget.dart";
 import "package:flutter/material.dart";
 import "package:logging/logging.dart";
 import "package:media_kit/media_kit.dart";
 import "package:media_kit_video/media_kit_video.dart";
 import "package:photos/core/constants.dart";
 import "package:photos/core/event_bus.dart";
-import "package:photos/events/file_caption_updated_event.dart";
 import "package:photos/events/guest_view_event.dart";
 import "package:photos/events/pause_video_event.dart";
 import "package:photos/events/resume_video_event.dart";
 import "package:photos/events/stream_switched_event.dart";
-import "package:photos/generated/l10n.dart";
+import "package:photos/events/video_mute_changed_event.dart";
 import "package:photos/models/file/extensions/file_props.dart";
 import "package:photos/models/file/file.dart";
+import "package:photos/module/download/file.dart";
 import "package:photos/module/download/task.dart";
 import "package:photos/service_locator.dart";
 import "package:photos/services/files_service.dart";
@@ -23,12 +25,10 @@ import "package:photos/states/detail_page_state.dart";
 import "package:photos/theme/colors.dart";
 import "package:photos/theme/ente_theme.dart";
 import "package:photos/ui/actions/file/file_actions.dart";
-import "package:photos/ui/common/loading_widget.dart";
 import "package:photos/ui/notification/toast.dart";
 import "package:photos/ui/viewer/file/video_widget_media_kit_common.dart"
     as common;
 import "package:photos/utils/dialog_util.dart";
-import "package:photos/utils/file_util.dart";
 
 class VideoWidgetMediaKit extends StatefulWidget {
   final EnteFile file;
@@ -67,13 +67,12 @@ class _VideoWidgetMediaKitState extends State<VideoWidgetMediaKit>
   bool _isAppInFG = true;
   late StreamSubscription<PauseVideoEvent> pauseVideoSubscription;
   late StreamSubscription<ResumeVideoEvent> resumeVideoSubscription;
+  StreamSubscription<VideoMuteChangedEvent>? _muteSubscription;
   bool isGuestView = false;
   late final StreamSubscription<GuestViewEvent> _guestViewEventSubscription;
   bool _isGuestView = false;
   StreamSubscription<StreamSwitchedEvent>? _streamSwitchedSubscription;
   StreamSubscription<DownloadTask>? _downloadTaskSubscription;
-  late final StreamSubscription<FileCaptionUpdatedEvent>
-  _captionUpdatedSubscription;
   final _transformationController = TransformationController();
   bool _isZooming = false;
 
@@ -99,6 +98,13 @@ class _VideoWidgetMediaKitState extends State<VideoWidgetMediaKit>
     ) {
       player.play();
     });
+    if (!widget.isFromMemories) {
+      _muteSubscription = Bus.instance.on<VideoMuteChangedEvent>().listen((
+        event,
+      ) {
+        player.setVolume(event.isMuted ? 0.0 : 100.0);
+      });
+    }
     _guestViewEventSubscription = Bus.instance.on<GuestViewEvent>().listen((
       event,
     ) {
@@ -129,16 +135,7 @@ class _VideoWidgetMediaKitState extends State<VideoWidgetMediaKit>
       },
     );
 
-    _captionUpdatedSubscription = Bus.instance
-        .on<FileCaptionUpdatedEvent>()
-        .listen((event) {
-          if (event.fileGeneratedID == widget.file.generatedID) {
-            if (mounted) {
-              setState(() {});
-            }
-          }
-        });
-    EnteWakeLockService.instance.updateWakeLock(
+    wakeLockService.updateWakeLock(
       enable: true,
       wakeLockFor: WakeLockFor.videoPlayback,
     );
@@ -149,7 +146,7 @@ class _VideoWidgetMediaKitState extends State<VideoWidgetMediaKit>
   }
 
   void loadOriginal() {
-    if (widget.file.isRemoteFile) {
+    if (widget.file.isRemoteOnlyFile) {
       _loadNetworkVideo();
       _setFileSizeIfNull();
     } else if (widget.file.isSharedMediaToAppSandbox) {
@@ -161,7 +158,9 @@ class _VideoWidgetMediaKitState extends State<VideoWidgetMediaKit>
       }
     } else {
       widget.file.getAsset.then((asset) async {
-        if (asset == null || !(await asset.exists)) {
+        // Android trash assets may report that they do not exist.
+        if (asset == null ||
+            !(await asset.exists || widget.file.isDeviceTrash)) {
           if (widget.file.uploadedFileID != null) {
             _loadNetworkVideo();
           }
@@ -193,7 +192,8 @@ class _VideoWidgetMediaKitState extends State<VideoWidgetMediaKit>
     _guestViewEventSubscription.cancel();
     pauseVideoSubscription.cancel();
     resumeVideoSubscription.cancel();
-    removeCallBack(widget.file);
+    _muteSubscription?.cancel();
+    removeDownloadCallback(widget.file);
     _progressNotifier.dispose();
     WidgetsBinding.instance.removeObserver(this);
     if (_downloadTaskSubscription != null) {
@@ -201,15 +201,14 @@ class _VideoWidgetMediaKitState extends State<VideoWidgetMediaKit>
       downloadManager.pause(widget.file.uploadedFileID!).ignore();
     }
     player.dispose();
-    _captionUpdatedSubscription.cancel();
     _transformationController.dispose();
-    if (EnteWakeLockService.instance.shouldKeepAppAwakeAcrossSessions) {
-      EnteWakeLockService.instance.updateWakeLock(
+    if (wakeLockService.shouldKeepAppAwakeAcrossSessions) {
+      wakeLockService.updateWakeLock(
         enable: true,
         wakeLockFor: WakeLockFor.handlingMediaKitEdgeCase,
       );
     } else {
-      EnteWakeLockService.instance.updateWakeLock(
+      wakeLockService.updateWakeLock(
         enable: false,
         wakeLockFor: WakeLockFor.videoPlayback,
       );
@@ -229,8 +228,7 @@ class _VideoWidgetMediaKitState extends State<VideoWidgetMediaKit>
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      // Keep recognizer out of the arena during multi-touch/zoom to avoid
-      // it stealing pinch gestures with predominantly vertical movement.
+      // During zoom, keep this recognizer out of multi-touch gesture arenas.
       onVerticalDragUpdate: _isGuestView || _isZooming
           ? null
           : (d) {
@@ -300,10 +298,7 @@ class _VideoWidgetMediaKitState extends State<VideoWidgetMediaKit>
             _progressNotifier.value = count / (widget.file.fileSize ?? total);
             if (_progressNotifier.value == 1) {
               if (mounted) {
-                showShortToast(
-                  context,
-                  AppLocalizations.of(context).decryptingVideo,
-                );
+                showShortToast(context, context.strings.decryptingVideo);
               }
             }
           },
@@ -314,10 +309,11 @@ class _VideoWidgetMediaKitState extends State<VideoWidgetMediaKit>
           }
         })
         .onError((error, stackTrace) {
+          if (!mounted) return;
           showErrorDialog(
             context,
-            AppLocalizations.of(context).error,
-            AppLocalizations.of(context).failedToDownloadVideo,
+            context.strings.error,
+            context.strings.failedToDownloadVideo,
           );
         });
   }
@@ -345,6 +341,9 @@ class _VideoWidgetMediaKitState extends State<VideoWidgetMediaKit>
                 : PlaylistMode.none,
           );
           controller = VideoController(player);
+        }
+        if (!widget.isFromMemories) {
+          player.setVolume(localSettings.isMuted() ? 0.0 : 100.0);
         }
         player.open(Media(url), play: _isAppInFG);
       });

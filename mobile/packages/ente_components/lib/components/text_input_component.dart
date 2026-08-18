@@ -11,14 +11,8 @@ import 'package:flutter/services.dart';
 
 enum TextInputComponentMessageType { helper, error, alert, success }
 
-/// Figma: https://www.figma.com/design/BuBNPPytxlVnqfmCUW0mgz/Ente-Visual-Design?node-id=2275-11526&m=dev
-/// Section: Textfield / Text Input
-/// Specs: 388px design width, 52px field height, 81px with label, 100px with helper.
-/// States: default, disabled, focused, error, success.
-///
-/// Multiline variant:
-/// https://www.figma.com/design/BuBNPPytxlVnqfmCUW0mgz/Ente-Visual-Design?node-id=2275-11746&m=dev
-
+// Figma: https://www.figma.com/design/BuBNPPytxlVnqfmCUW0mgz/Ente-Visual-Design?node-id=2275-11526&m=dev
+// Multiline variant: https://www.figma.com/design/BuBNPPytxlVnqfmCUW0mgz/Ente-Visual-Design?node-id=2275-11746&m=dev
 class TextInputComponent extends StatefulWidget {
   const TextInputComponent({
     super.key,
@@ -43,8 +37,10 @@ class TextInputComponent extends StatefulWidget {
     this.isEmptyNotifier,
     this.inputFormatters,
     this.keyboardType,
+    this.textInputAction,
     this.enableFillColor = true,
     this.autocorrect = true,
+    this.enableSuggestions = true,
     this.isRequired = false,
     this.prefix,
     this.suffix,
@@ -52,6 +48,7 @@ class TextInputComponent extends StatefulWidget {
     this.messageType = TextInputComponentMessageType.helper,
     this.messageIcon,
     this.isDisabled = false,
+    this.readOnly = false,
     this.autofillHints,
     this.maxLines,
     this.minLines,
@@ -67,15 +64,10 @@ class TextInputComponent extends StatefulWidget {
   final bool autofocus;
   final int? maxLength;
 
-  /// Executes [onSubmit] when the notifier changes. Duplicate submissions are
-  /// ignored while a submit is in flight.
   final ValueNotifier<dynamic>? submitNotifier;
 
-  /// Clears and unfocuses the field when the notifier changes, unless [onCancel]
-  /// is provided.
   final ValueNotifier<dynamic>? cancelNotifier;
 
-  /// Called by [submitNotifier] or the platform editing-complete action.
   final FutureOr<void> Function(String value)? onSubmit;
   final ValueChanged<String>? onChanged;
   final VoidCallback? onCancel;
@@ -87,22 +79,24 @@ class TextInputComponent extends StatefulWidget {
   final ValueNotifier<bool>? isEmptyNotifier;
   final List<TextInputFormatter>? inputFormatters;
   final TextInputType? keyboardType;
+
+  final TextInputAction? textInputAction;
   final bool enableFillColor;
   final bool autocorrect;
+  final bool enableSuggestions;
   final bool isRequired;
 
-  /// Caller-owned leading widget. Pass explicit color and size when needed.
   final Widget? prefix;
 
-  /// Caller-owned trailing widget. Multiline fields pin this slot to the top.
   final Widget? suffix;
 
-  /// Optional tap handler for [suffix]. When provided, the trailing affordance
-  /// gets a 48px tap target without changing the field's visual layout.
   final VoidCallback? onSuffixTap;
   final TextInputComponentMessageType messageType;
   final IconData? messageIcon;
   final bool isDisabled;
+
+  // Unlike isDisabled, this keeps enabled styling and selectable text.
+  final bool readOnly;
   final Iterable<String>? autofillHints;
   final int? maxLines;
   final int? minLines;
@@ -133,6 +127,7 @@ class _TextInputComponentState extends State<TextInputComponent> {
   @override
   void initState() {
     super.initState();
+    _configureGroupId();
     widget.submitNotifier?.addListener(_handleSubmitRequested);
     widget.cancelNotifier?.addListener(_handleCancel);
     _internalController = widget.controller == null
@@ -150,6 +145,9 @@ class _TextInputComponentState extends State<TextInputComponent> {
   @override
   void didUpdateWidget(covariant TextInputComponent oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.isDisabled != widget.isDisabled) {
+      _configureGroupId();
+    }
     if (oldWidget.submitNotifier != widget.submitNotifier) {
       oldWidget.submitNotifier?.removeListener(_handleSubmitRequested);
       widget.submitNotifier?.addListener(_handleSubmitRequested);
@@ -200,6 +198,23 @@ class _TextInputComponentState extends State<TextInputComponent> {
     super.dispose();
   }
 
+  late Object _groupId;
+  final _defaultGroupId = Object();
+  final _disabledGroupId = Object();
+
+  @override
+  void didChangeDependencies() {
+    _configureGroupId();
+    super.didChangeDependencies();
+  }
+
+  void _configureGroupId() {
+    _groupId = _defaultGroupId;
+    if (widget.isDisabled) {
+      _groupId = _disabledGroupId;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = context.componentColors;
@@ -219,7 +234,7 @@ class _TextInputComponentState extends State<TextInputComponent> {
             children: [
               Text(
                 widget.label!,
-                style: TextStyles.bodyBold.copyWith(color: _labelColor(colors)),
+                style: TextStyles.body.copyWith(color: _labelColor(colors)),
               ),
               if (widget.isRequired) ...[
                 const SizedBox(width: 2),
@@ -232,91 +247,100 @@ class _TextInputComponentState extends State<TextInputComponent> {
           ),
           const SizedBox(height: Spacing.sm),
         ],
-        GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: widget.isDisabled ? null : _focusNode.requestFocus,
-          child: Container(
-            height: _isMultiline ? null : _kHeight,
-            constraints: _isMultiline
-                ? const BoxConstraints(minHeight: _kHeight)
-                : null,
-            decoration: BoxDecoration(
-              color: _backgroundColor(colors),
-              borderRadius: BorderRadius.circular(Radii.lg),
-              border: Border.all(color: _borderColor(colors)),
-            ),
-            child: Stack(
-              clipBehavior: Clip.none,
-              fit: _isMultiline ? StackFit.loose : StackFit.expand,
-              children: [
-                Padding(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: Spacing.lg,
-                    vertical: _isMultiline ? Spacing.lg : 0,
-                  ),
-                  child: Row(
-                    crossAxisAlignment: _isMultiline
-                        ? CrossAxisAlignment.start
-                        : CrossAxisAlignment.center,
-                    children: [
-                      if (prefix != null) ...[
-                        prefix,
-                        const SizedBox(width: Spacing.sm),
-                      ],
-                      Expanded(
-                        child: TextField(
-                          controller: _controller,
-                          focusNode: _focusNode,
-                          enabled: !widget.isDisabled,
-                          autofocus: widget.autofocus,
-                          obscureText: _obscureText,
-                          maxLines: widget.isPasswordInput
-                              ? 1
-                              : widget.maxLines ?? (_isMultiline ? null : 1),
-                          minLines: widget.isPasswordInput
-                              ? null
-                              : widget.minLines,
-                          keyboardType: widget.keyboardType,
-                          textCapitalization: widget.textCapitalization,
-                          inputFormatters: _inputFormatters,
-                          autofillHints:
-                              widget.autofillHints ??
-                              (widget.isPasswordInput
-                                  ? const [AutofillHints.password]
-                                  : const []),
-                          autocorrect:
-                              widget.autocorrect && !widget.isPasswordInput,
-                          enableSuggestions: !widget.isPasswordInput,
-                          textAlignVertical: _isMultiline
-                              ? TextAlignVertical.top
-                              : TextAlignVertical.center,
-                          onEditingComplete: _handleEditingComplete,
-                          style: TextStyles.body.copyWith(
-                            color: _textColor(colors),
-                          ),
-                          decoration: InputDecoration(
-                            hintText: widget.hintText,
-                            hintStyle: TextStyles.body.copyWith(
-                              color: _hintColor(colors),
+        TextFieldTapRegion(
+          groupId: _groupId,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: widget.isDisabled ? null : _focusNode.requestFocus,
+            child: Container(
+              height: _isMultiline ? null : _kHeight,
+              constraints: _isMultiline
+                  ? const BoxConstraints(minHeight: _kHeight)
+                  : null,
+              decoration: BoxDecoration(
+                color: _backgroundColor(colors),
+                borderRadius: BorderRadius.circular(Radii.lg),
+                border: Border.all(color: _borderColor(colors)),
+              ),
+              child: Stack(
+                clipBehavior: Clip.none,
+                fit: _isMultiline ? StackFit.loose : StackFit.expand,
+                children: [
+                  Padding(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: Spacing.lg,
+                      vertical: _isMultiline ? Spacing.lg : 0,
+                    ),
+                    child: Row(
+                      crossAxisAlignment: _isMultiline
+                          ? CrossAxisAlignment.start
+                          : CrossAxisAlignment.center,
+                      children: [
+                        if (prefix != null) ...[
+                          prefix,
+                          const SizedBox(width: Spacing.sm),
+                        ],
+                        Expanded(
+                          child: TextField(
+                            groupId: _groupId,
+                            controller: _controller,
+                            focusNode: _focusNode,
+                            enabled: !widget.isDisabled,
+                            readOnly: widget.readOnly,
+                            autofocus: widget.autofocus,
+                            obscureText: _obscureText,
+                            maxLines: widget.isPasswordInput
+                                ? 1
+                                : widget.maxLines ?? (_isMultiline ? null : 1),
+                            minLines: widget.isPasswordInput
+                                ? null
+                                : widget.minLines,
+                            keyboardType: widget.keyboardType,
+                            textInputAction: widget.textInputAction,
+                            textCapitalization: widget.textCapitalization,
+                            inputFormatters: _inputFormatters,
+                            autofillHints:
+                                widget.autofillHints ??
+                                (widget.isPasswordInput
+                                    ? const [AutofillHints.password]
+                                    : const []),
+                            autocorrect:
+                                widget.autocorrect && !widget.isPasswordInput,
+                            enableSuggestions:
+                                widget.enableSuggestions &&
+                                !widget.isPasswordInput,
+                            textAlignVertical: _isMultiline
+                                ? TextAlignVertical.top
+                                : TextAlignVertical.center,
+                            onEditingComplete: _handleEditingComplete,
+                            onTapOutside: (_) => _focusNode.unfocus(),
+                            style: TextStyles.body.copyWith(
+                              color: _textColor(colors),
                             ),
-                            border: InputBorder.none,
-                            focusedBorder: InputBorder.none,
-                            enabledBorder: InputBorder.none,
-                            disabledBorder: InputBorder.none,
-                            isDense: true,
-                            contentPadding: EdgeInsets.zero,
+                            decoration: InputDecoration(
+                              hintText: widget.hintText,
+                              hintStyle: TextStyles.body.copyWith(
+                                color: _hintColor(colors),
+                              ),
+                              border: InputBorder.none,
+                              focusedBorder: InputBorder.none,
+                              enabledBorder: InputBorder.none,
+                              disabledBorder: InputBorder.none,
+                              isDense: true,
+                              contentPadding: EdgeInsets.zero,
+                            ),
                           ),
                         ),
-                      ),
-                      if (suffix != null) ...[
-                        const SizedBox(width: Spacing.sm),
-                        suffix,
+                        if (suffix != null) ...[
+                          const SizedBox(width: Spacing.sm),
+                          suffix,
+                        ],
                       ],
-                    ],
+                    ),
                   ),
-                ),
-                if (suffixTap != null) _suffixTapTarget(suffixTap),
-              ],
+                  if (suffixTap != null) _suffixTapTarget(suffixTap),
+                ],
+              ),
             ),
           ),
         ),
@@ -508,9 +532,12 @@ class _TextInputComponentState extends State<TextInputComponent> {
   }
 
   Widget _slot(Widget child) {
-    return SizedBox.square(
-      dimension: _kIconContainerSize,
-      child: Center(child: child),
+    return ConstrainedBox(
+      constraints: const BoxConstraints(
+        minWidth: _kIconContainerSize,
+        minHeight: _kIconContainerSize,
+      ),
+      child: Center(widthFactor: 1, heightFactor: 1, child: child),
     );
   }
 
@@ -545,7 +572,9 @@ class _TextInputComponentState extends State<TextInputComponent> {
       TextInput.finishAutofillContext();
     }
     if (widget.onSubmit == null) {
-      if (widget.shouldUnfocusOnClearOrSubmit) {
+      if (widget.textInputAction == TextInputAction.next) {
+        _focusNode.nextFocus();
+      } else if (widget.shouldUnfocusOnClearOrSubmit) {
         FocusScope.of(context).unfocus();
       }
       return;
@@ -561,6 +590,7 @@ class _TextInputComponentState extends State<TextInputComponent> {
     if (widget.onSubmit == null || widget.isDisabled || _isSubmitting) {
       return;
     }
+    final popNavAfterSubmission = widget.popNavAfterSubmission;
 
     setState(() {
       _isSubmitting = true;
@@ -573,18 +603,19 @@ class _TextInputComponentState extends State<TextInputComponent> {
     try {
       await widget.onSubmit!.call(_controller.text);
     } catch (error) {
-      if (error.toString().contains('Incorrect password')) {
-        _surfaceWrongPasswordState();
-      }
       if (mounted) {
+        if (error.toString().contains('Incorrect password')) {
+          _surfaceWrongPasswordState();
+        }
         setState(() => _isSubmitting = false);
+        if (popNavAfterSubmission) {
+          _popNavigatorStack(
+            context,
+            e: error is Exception ? error : Exception(error.toString()),
+          );
+        }
       }
-      if (widget.popNavAfterSubmission) {
-        _popNavigatorStack(
-          context,
-          e: error is Exception ? error : Exception(error.toString()),
-        );
-      } else {
+      if (!popNavAfterSubmission) {
         rethrow;
       }
       return;

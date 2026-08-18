@@ -23,10 +23,9 @@ enum ButtonComponentVariant {
 
 enum ButtonComponentSize { small, large }
 
-/// Figma: https://www.figma.com/design/BuBNPPytxlVnqfmCUW0mgz/Ente-Visual-Design?node-id=2207-41578&m=dev
-/// Section: Buttons / Button Small
-/// Specs: 52px height, 20px radius, 24px horizontal padding.
-/// States: default, hover, pressed, disabled, loading, success.
+enum ButtonComponentDensity { regular, compact }
+
+// Figma: https://www.figma.com/design/BuBNPPytxlVnqfmCUW0mgz/Ente-Visual-Design?node-id=2207-41578&m=dev
 class ButtonComponent extends StatefulWidget {
   const ButtonComponent({
     super.key,
@@ -34,24 +33,30 @@ class ButtonComponent extends StatefulWidget {
     this.onTap,
     this.variant = ButtonComponentVariant.primary,
     this.size = ButtonComponentSize.large,
+    this.density = ButtonComponentDensity.regular,
     this.isDisabled = false,
     this.shouldSurfaceExecutionStates = true,
     this.shouldShowSuccessState = true,
     this.shouldShowSuccessConfirmation = false,
     this.progressStatus,
     this.leading,
+    this.dismissModalOnSuccess = false,
   });
 
   final String label;
   final FutureOr<void> Function()? onTap;
   final ButtonComponentVariant variant;
   final ButtonComponentSize size;
+  final ButtonComponentDensity density;
   final bool isDisabled;
   final bool shouldSurfaceExecutionStates;
   final bool shouldShowSuccessState;
   final bool shouldShowSuccessConfirmation;
   final ValueListenable<String>? progressStatus;
   final Widget? leading;
+
+  // Only popup routes such as dialogs and sheets are dismissed.
+  final bool dismissModalOnSuccess;
 
   @override
   State<ButtonComponent> createState() => _ButtonComponentState();
@@ -61,7 +66,8 @@ class _ButtonComponentState extends State<ButtonComponent>
     with SingleTickerProviderStateMixin {
   static const double _executionIconSize = IconSizes.medium;
   static const double _contentMinHeight = 24;
-  static const double _verticalPadding = 14;
+  static const double _regularVerticalPadding = 14;
+  static const double _compactVerticalPadding = 12;
   static const Duration _loadingDelay = Duration(milliseconds: 300);
   static const Duration _successDisplayDuration = Duration(seconds: 1);
   static const Duration _minimumPressDuration = Duration(milliseconds: 120);
@@ -234,11 +240,14 @@ class _ButtonComponentState extends State<ButtonComponent>
     final underlined =
         widget.variant == ButtonComponentVariant.link ||
         widget.variant == ButtonComponentVariant.tertiaryCritical;
+    final labelStyle = widget.density == ButtonComponentDensity.compact
+        ? TextStyles.body
+        : TextStyles.bodyBold;
     final label = Text(
       widget.label,
       overflow: TextOverflow.ellipsis,
       maxLines: 2,
-      style: TextStyles.bodyBold.copyWith(
+      style: labelStyle.copyWith(
         color: foreground,
         decoration: underlined ? TextDecoration.underline : null,
         decorationColor: underlined ? foreground : null,
@@ -333,7 +342,9 @@ class _ButtonComponentState extends State<ButtonComponent>
   }
 
   double get _buttonVerticalPadding {
-    return _verticalPadding;
+    return widget.density == ButtonComponentDensity.compact
+        ? _compactVerticalPadding
+        : _regularVerticalPadding;
   }
 
   _ResolvedButtonColors _colors(BuildContext context) {
@@ -438,6 +449,7 @@ class _ButtonComponentState extends State<ButtonComponent>
           _isPressed = false;
         });
         _syncLoadingController();
+        _dismissRouteOnSuccess();
       }
     } catch (_) {
       _loadingTimer?.cancel();
@@ -463,12 +475,31 @@ class _ButtonComponentState extends State<ButtonComponent>
     _successResetTimer?.cancel();
     _successResetTimer = Timer(_successDisplayDuration, () {
       if (!mounted) return;
+      if (_dismissRouteOnSuccess()) {
+        return;
+      }
       setState(() {
         _executionState = ComponentExecutionState.idle;
         _loadingVisible = false;
       });
       _syncLoadingController();
     });
+  }
+
+  bool _dismissRouteOnSuccess() {
+    if (!widget.dismissModalOnSuccess || !mounted) {
+      return false;
+    }
+    final navigator = Navigator.of(context);
+    if (!navigator.canPop()) {
+      return false;
+    }
+    final route = ModalRoute.of(context);
+    if (route is! PopupRoute || !route.isCurrent) {
+      return false;
+    }
+    navigator.pop();
+    return true;
   }
 
   Color _background(BuildContext context) {

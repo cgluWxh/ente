@@ -4,10 +4,10 @@ import (
 	"context"
 	"database/sql"
 
-	"github.com/ente-io/stacktrace"
+	"github.com/ente/stacktrace"
 	"github.com/lib/pq"
 
-	"github.com/ente-io/museum/pkg/utils/time"
+	"github.com/ente/museum/pkg/utils/time"
 )
 
 type NotificationHistoryRepository struct {
@@ -53,8 +53,6 @@ func (repo *NotificationHistoryRepository) SetLastNotificationTimeToNowWithGroup
 	return stacktrace.Propagate(err, "")
 }
 
-// GetLastNotificationTimes returns the latest sent_time per templateID for the
-// provided user.
 func (repo *NotificationHistoryRepository) GetLastNotificationTimes(userID int64, templateIDs []string) (map[string]int64, error) {
 	result := make(map[string]int64)
 	if len(templateIDs) == 0 {

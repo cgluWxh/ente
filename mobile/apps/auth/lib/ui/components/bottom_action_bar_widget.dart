@@ -5,7 +5,7 @@ import 'package:ente_auth/theme/ente_theme.dart';
 import 'package:ente_auth/ui/components/actions_bar_widget.dart';
 import 'package:ente_auth/ui/components/code_selection_actions_widget.dart';
 import 'package:ente_auth/ui/components/components_constants.dart';
-import "package:ente_auth/ui/components/divider_widget.dart";
+import "package:ente_ui/components/divider_widget.dart";
 import 'package:flutter/material.dart';
 
 class BottomActionBarWidget extends StatelessWidget {
@@ -78,7 +78,6 @@ class BottomActionBarWidget extends StatelessWidget {
           ),
           const DividerWidget(dividerType: DividerType.bottomBar),
           ActionBarWidget(code: code, onCancel: onCancel),
-          // const SizedBox(height: 2)
         ],
       ),
     );

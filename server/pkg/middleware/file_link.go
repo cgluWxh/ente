@@ -4,18 +4,18 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"slices"
 
-	publicCtrl "github.com/ente-io/museum/pkg/controller/public"
-	"github.com/ente-io/museum/pkg/repo/public"
-	"github.com/ente-io/museum/pkg/utils/array"
+	publicCtrl "github.com/ente/museum/pkg/controller/public"
+	"github.com/ente/museum/pkg/repo/public"
 
-	"github.com/ente-io/museum/ente"
-	"github.com/ente-io/museum/pkg/controller"
-	"github.com/ente-io/museum/pkg/controller/discord"
-	"github.com/ente-io/museum/pkg/utils/auth"
-	"github.com/ente-io/museum/pkg/utils/network"
-	"github.com/ente-io/museum/pkg/utils/time"
-	"github.com/ente-io/stacktrace"
+	"github.com/ente/museum/ente"
+	"github.com/ente/museum/pkg/controller"
+	"github.com/ente/museum/pkg/controller/discord"
+	"github.com/ente/museum/pkg/utils/auth"
+	"github.com/ente/museum/pkg/utils/network"
+	"github.com/ente/museum/pkg/utils/time"
+	"github.com/ente/stacktrace"
 	"github.com/gin-gonic/gin"
 	"github.com/patrickmn/go-cache"
 	"github.com/sirupsen/logrus"
@@ -23,7 +23,6 @@ import (
 
 var filePasswordWhiteListedURLs = []string{"/file-link/pass-info", "/file-link/verify-password"}
 
-// FileLinkMiddleware intercepts and authenticates incoming requests
 type FileLinkMiddleware struct {
 	FileLinkRepo      *public.FileLinkRepository
 	FileLinkCtrl      *publicCtrl.FileLinkController
@@ -32,9 +31,6 @@ type FileLinkMiddleware struct {
 	DiscordController *discord.DiscordController
 }
 
-// Authenticate returns a middle ware that extracts the `X-Auth-Access-Token`
-// within the header of a request and uses it to validate the access token and set the
-// ente.PublicAccessContext with auth.PublicAccessKey as key
 func (m *FileLinkMiddleware) Authenticate(urlSanitizer func(_ *gin.Context) string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		accessToken := auth.GetAccessToken(c)
@@ -108,7 +104,6 @@ func (m *FileLinkMiddleware) Authenticate(urlSanitizer func(_ *gin.Context) stri
 			return
 		}
 
-		// checks password protected public collection
 		if !passwordValidated && fileLinkRow.PassHash != nil && *fileLinkRow.PassHash != "" {
 			if err = m.validatePassword(c, reqPath, fileLinkRow); err != nil {
 				logrus.WithError(err).Warn("password validation failed")
@@ -198,7 +193,6 @@ func (m *FileLinkMiddleware) isDeviceLimitReached(ctx context.Context,
 	return false, stacktrace.Propagate(err, "failed to record access history")
 }
 
-// validatePassword will verify if the user is provided correct password for the public album
 func (m *FileLinkMiddleware) validatePassword(
 	c *gin.Context,
 	reqPath string,
@@ -206,7 +200,7 @@ func (m *FileLinkMiddleware) validatePassword(
 ) error {
 	accessTokenJWT := auth.GetAccessTokenJWT(c)
 	if accessTokenJWT == "" {
-		if array.StringInList(reqPath, filePasswordWhiteListedURLs) {
+		if slices.Contains(filePasswordWhiteListedURLs, reqPath) {
 			return nil
 		}
 		return &ente.ErrPassProtectedResource

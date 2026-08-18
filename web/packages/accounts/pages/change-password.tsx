@@ -4,11 +4,11 @@ import {
     AccountsPageFooter,
     AccountsPageTitle,
 } from "ente-accounts/components/layouts/centered-paper";
+import { deriveKeyInsufficientMemoryErrorMessage } from "ente-accounts/services/crypto";
 import { appHomeRoute, stashRedirect } from "ente-accounts/services/redirect";
 import { changePassword, type LocalUser } from "ente-accounts/services/user";
 import { LinkButton } from "ente-base/components/LinkButton";
 import { LoadingIndicator } from "ente-base/components/loaders";
-import { deriveKeyInsufficientMemoryErrorMessage } from "ente-base/crypto/types";
 import log from "ente-base/log";
 import { t } from "i18next";
 import { useRouter } from "next/router";
@@ -19,17 +19,11 @@ import {
 } from "../components/NewPasswordForm";
 import { savedLocalUser } from "../services/accounts-db";
 
-/**
- * A page that allows a user to reset or change their password.
- *
- * See: [Note: Login pages]
- */
 const Page: React.FC = () => {
     const [user, setUser] = useState<LocalUser | undefined>(undefined);
 
     const router = useRouter();
 
-    // We're invoked with the "?op=reset" query parameter in the recovery flow.
     const isReset = router.query.op == "reset";
 
     useEffect(() => {
@@ -53,9 +47,6 @@ export default Page;
 
 interface PageContentsProps {
     user: LocalUser;
-    /**
-     * True if the password is being reset during the account recovery flow.
-     */
     isReset: boolean;
 }
 

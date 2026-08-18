@@ -38,7 +38,6 @@ class _RecoveryKeySheetState extends State<RecoveryKeySheet> {
 
   @override
   void dispose() {
-    // Clean up temp file if it exists
     if (_recoveryKeyFile.existsSync()) {
       _recoveryKeyFile.deleteSync();
     }
@@ -50,7 +49,6 @@ class _RecoveryKeySheetState extends State<RecoveryKeySheet> {
     final colorScheme = getEnteColorScheme(context);
     final textTheme = getEnteTextTheme(context);
 
-    // Convert recovery key to mnemonic words
     final String recoveryKeyMnemonic = bip39.entropyToMnemonic(
       widget.recoveryKey,
     );
@@ -136,11 +134,13 @@ class _RecoveryKeySheetState extends State<RecoveryKeySheet> {
 
   Future<void> _shareRecoveryKey(String recoveryKey) async {
     try {
+      if (!mounted) return;
       if (_recoveryKeyFile.existsSync()) {
         await _recoveryKeyFile.delete();
       }
       _recoveryKeyFile.writeAsStringSync(recoveryKey);
 
+      if (!mounted) return;
       await shareFiles([
         XFile(_recoveryKeyFile.path, mimeType: 'text/plain'),
       ], context: context);

@@ -4,9 +4,13 @@ import "dart:io";
 
 import 'package:backup_exclusion/backup_exclusion.dart';
 import 'package:bip39/bip39.dart' as bip39;
+import 'package:ente_account_deletion/account_deletion.dart';
 import 'package:ente_contacts/contacts.dart';
 import "package:ente_crypto/ente_crypto.dart";
+import 'package:ente_lock_screen/lock_screen_host.dart';
+import 'package:ente_pure_utils/ente_pure_utils.dart';
 import "package:flutter/services.dart";
+import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:logging/logging.dart';
 import 'package:path_provider/path_provider.dart';
@@ -23,6 +27,7 @@ import "package:photos/db/gallery_downloads_db.dart";
 import "package:photos/db/memories_db.dart";
 import "package:photos/db/memory_shares_db.dart";
 import "package:photos/db/ml/db.dart";
+import "package:photos/db/social_db.dart";
 import 'package:photos/db/trash_db.dart';
 import 'package:photos/db/upload_locks_db.dart';
 import "package:photos/events/app_mode_changed_event.dart";
@@ -31,37 +36,34 @@ import 'package:photos/events/user_logged_out_event.dart';
 import 'package:photos/gateways/users/models/key_attributes.dart';
 import 'package:photos/gateways/users/models/key_gen_result.dart';
 import 'package:photos/gateways/users/models/private_key_attributes.dart';
+import 'package:photos/module/upload/upload_artifact.dart';
 import 'package:photos/service_locator.dart';
 import 'package:photos/services/collections_service.dart';
 import 'package:photos/services/favorites_service.dart';
 import "package:photos/services/home_widget_service.dart";
 import 'package:photos/services/ignored_files_service.dart';
 import "package:photos/services/machine_learning/face_ml/person/person_service.dart";
+import "package:photos/services/machine_learning/ml_run_control.dart";
+import "package:photos/services/machine_learning/ml_service.dart";
 import "package:photos/services/machine_learning/similar_images_service.dart";
 import "package:photos/services/memory_share_service.dart";
 import "package:photos/services/notification_service.dart";
 import 'package:photos/services/search_service.dart';
 import 'package:photos/services/sync/sync_service.dart';
 import 'package:photos/services/video_preview_service.dart';
-import 'package:photos/utils/file_uploader.dart';
-import "package:photos/utils/lock_screen_settings.dart";
 import 'package:photos/utils/validator_util.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import "package:tuple/tuple.dart";
 import 'package:uuid/uuid.dart';
 
-class Configuration {
+class Configuration implements LockScreenHost, AccountDeletionHost {
   Configuration._privateConstructor();
 
   static final Configuration instance = Configuration._privateConstructor();
 
   static const emailKey = "email";
-  static const foldersToBackUpKey = "folders_to_back_up";
   static const keyAttributesKey = "key_attributes";
   static const keyKey = "key";
-  static const keyShouldBackupOverMobileData = "should_backup_over_mobile_data";
-  static const keyShouldBackupVideos = "should_backup_videos";
-  static const keyShowSystemLockScreen = "should_show_lock_screen";
   static const lastTempFolderClearTimeKey = "last_temp_folder_clear_time";
   static const secretKeyKey = "secret_key";
   static const tokenKey = "token";
@@ -84,9 +86,9 @@ class Configuration {
   late String _sharedDocumentsMediaDirectory;
   String? _volatilePassword;
 
-  Future<void> init() async {
+  Future<void> init(SharedPreferences preferences) async {
     try {
-      _preferences = await SharedPreferences.getInstance();
+      _preferences = preferences;
       _secureStorage = const FlutterSecureStorage(
         iOptions: IOSOptions(
           accessibility: KeychainAccessibility.first_unlock_this_device,
@@ -94,7 +96,9 @@ class Configuration {
       );
       _documentsDirectory = (await getApplicationDocumentsDirectory()).path;
       final appSupportDirectory = await getApplicationSupportDirectory();
-      // Exclude Documents (SQLite, thumbnails, decrypted media) and Application Support (ML models) from backups since they’re server-derivable or must remain within the device’s E2EE boundary.
+      // Exclude Documents (SQLite, thumbnails, decrypted media) and Application
+      // Support (ML models) from backups. They are server-derivable or must
+      // remain within the device's E2EE boundary.
       await excludeFromBackup(_documentsDirectory);
       await excludeFromBackup(appSupportDirectory.path);
       _tempDocumentsDirPath = _documentsDirectory + "/temp/";
@@ -136,10 +140,8 @@ class Configuration {
       _logger.info('User ID: ${getUserID()}');
     } catch (e, s) {
       _logger.severe("Configuration init failed", e, s);
-      /*
-      Check if it's a known is related to reading secret from secure storage
-      on android https://github.com/mogol/flutter_secure_storage/issues/541
-       */
+      // BadPaddingException can mean Android secure storage is inaccessible.
+      // https://github.com/mogol/flutter_secure_storage/issues/541
       if (e is PlatformException) {
         final PlatformException error = e;
         final bool isBadPaddingError =
@@ -155,10 +157,7 @@ class Configuration {
     }
   }
 
-  // _cleanUpStaleFiles deletes all files in the temp directory that are older
-  // than kTempFolderDeletionTimeBuffer except the the temp encrypted files for upload.
-  // Those file are deleted by file uploader after the upload is complete or those
-  // files are not being used / tracked.
+  // Leave upload artifacts for FileUploader to resume or delete.
   Future<void> _cleanUpStaleFiles(Directory tempDocumentsDir) async {
     try {
       final currentTime = DateTime.now().microsecondsSinceEpoch;
@@ -169,7 +168,7 @@ class Configuration {
         final files = tempDocumentsDir.listSync();
         for (final file in files) {
           if (file is File) {
-            if (file.path.contains(uploadTempFilePrefix)) {
+            if (isUploadTempArtifactPath(file.path)) {
               skippedTempUploadFiles++;
               continue;
             }
@@ -191,8 +190,10 @@ class Configuration {
     }
   }
 
+  @override
   Future<void> logout({bool autoLogout = false}) async {
     _logger.info("Logging out, autoLogout: $autoLogout");
+    MLService.instance.stopActiveRun(MlStopReason.logout);
     if (!autoLogout) {
       if (flagService.stopStreamProcess) {
         VideoPreviewService.instance.stop('logout');
@@ -209,7 +210,8 @@ class Configuration {
       }
     }
 
-    // Clear preferences and secure storage
+    await _clearTempFolderOnLogout();
+
     await _preferences.clear();
     await _secureStorage.deleteAll();
     _key = null;
@@ -217,12 +219,10 @@ class Configuration {
     _secretKey = null;
     _volatilePassword = null;
 
-    // Clear all scheduled notifications (ritual reminders, memories, etc.)
     await NotificationService.instance.clearAllScheduledNotifications(
       logLines: false,
     );
 
-    // Clear all database tables
     await FilesDB.instance.clearTable();
     await GalleryDownloadsDB.instance.clearTable();
     await CollectionsDB.instance.clearTable();
@@ -232,25 +232,28 @@ class Configuration {
     await UploadLocksDB.instance.clearTable();
     await TrashDB.instance.clearTable();
     await ContactsDatabase().clearTable();
+    await SocialDB.instance.clearAllData();
 
-    // Clear all in-memory caches
     ThumbnailInMemoryLruCache.clearAll();
     FileLruCache.clearAll();
 
-    // Clear video cache
+    try {
+      await DefaultCacheManager().emptyCache();
+    } catch (e) {
+      _logger.warning("Failed to clear image cache", e);
+    }
+
     try {
       await VideoCacheManager.instance.emptyCache();
     } catch (e) {
       _logger.warning("Failed to clear video cache", e);
     }
 
-    // Clear all service caches
     await SimilarImagesService.instance.clearCache();
     await IgnoredFilesService.instance.reset();
     unawaited(HomeWidgetService.instance.clearWidget(autoLogout));
     MemoryShareService.instance.clearCache();
 
-    // Clear additional caches (safe to call even if not initialized)
     try {
       await magicCacheService.clearMagicCache();
     } catch (e) {
@@ -266,7 +269,6 @@ class Configuration {
       );
     }
 
-    // Reset Ente Rewind caches and services
     try {
       wrappedService.resetForLogout();
     } catch (e) {
@@ -279,8 +281,7 @@ class Configuration {
     }
 
     if (!autoLogout) {
-      // Following services won't be initialized if it's the case of autoLogout
-      FileUploader.instance.clearCachedUploadURLs();
+      // Auto logout can run before these services are initialized.
       CollectionsService.instance.clearCache();
       FavoritesService.instance.clearCache();
       SearchService.instance.clearCache();
@@ -301,6 +302,16 @@ class Configuration {
     }
   }
 
+  Future<void> _clearTempFolderOnLogout() async {
+    try {
+      await deleteDirectoryContents(_tempDocumentsDirPath);
+      await Directory(_tempDocumentsDirPath).create(recursive: true);
+      _logger.info("Cleared temp folder on logout");
+    } catch (e, s) {
+      _logger.warning("Failed to clear temp folder on logout", e, s);
+    }
+  }
+
   bool showAutoLogoutDialog() {
     return _preferences.containsKey("auto_logout");
   }
@@ -310,18 +321,10 @@ class Configuration {
   }
 
   Future<KeyGenResult> generateKey(String password) async {
-    // Create a master key
     final masterKey = CryptoUtil.generateKey();
-
-    // Create a recovery key
     final recoveryKey = CryptoUtil.generateKey();
-
-    // Encrypt master key and recovery key with each other
     final encryptedMasterKey = CryptoUtil.encryptSync(masterKey, recoveryKey);
     final encryptedRecoveryKey = CryptoUtil.encryptSync(recoveryKey, masterKey);
-
-    // Derive a key from the password that will be used to encrypt and
-    // decrypt the master key
     final kekSalt = CryptoUtil.getSaltToDeriveKey();
     final derivedKeyResult = await CryptoUtil.deriveSensitiveKey(
       utf8.encode(password),
@@ -329,13 +332,11 @@ class Configuration {
     );
     final loginKey = await CryptoUtil.deriveLoginKey(derivedKeyResult.key);
 
-    // Encrypt the key with this derived key
     final encryptedKeyData = CryptoUtil.encryptSync(
       masterKey,
       derivedKeyResult.key,
     );
 
-    // Generate a public-private keypair and encrypt the latter
     final keyPair = await CryptoUtil.generateKeyPair();
     final encryptedSecretKeyData = CryptoUtil.encryptSync(
       keyPair.sk,
@@ -367,11 +368,7 @@ class Configuration {
   Future<Tuple2<KeyAttributes, Uint8List>> getAttributesForNewPassword(
     String password,
   ) async {
-    // Get master key
     final masterKey = getKey();
-
-    // Derive a key from the password that will be used to encrypt and
-    // decrypt the master key
     final kekSalt = CryptoUtil.getSaltToDeriveKey();
     final derivedKeyResult = await CryptoUtil.deriveSensitiveKey(
       utf8.encode(password),
@@ -379,7 +376,6 @@ class Configuration {
     );
     final loginKey = await CryptoUtil.deriveLoginKey(derivedKeyResult.key);
 
-    // Encrypt the key with this derived key
     final encryptedKeyData = CryptoUtil.encryptSync(
       masterKey!,
       derivedKeyResult.key,
@@ -397,10 +393,6 @@ class Configuration {
     return Tuple2(updatedAttributes, loginKey);
   }
 
-  // decryptSecretsAndGetLoginKey decrypts the master key and recovery key
-  // with the given password and save them in local secure storage.
-  // This method also returns the keyEncKey that can be used for performing
-  // SRP setup for existing users.
   Future<Uint8List> decryptSecretsAndGetKeyEncKey(
     String password,
     KeyAttributes attributes, {
@@ -411,8 +403,6 @@ class Configuration {
       password,
       getEncryptedToken(),
     );
-    // Derive key-encryption-key from the entered password and existing
-    // mem and ops limits
     keyEncryptionKey ??= await CryptoUtil.deriveKey(
       utf8.encode(password),
       CryptoUtil.base642bin(attributes.kekSalt),
@@ -422,14 +412,13 @@ class Configuration {
 
     Uint8List key;
     try {
-      // Decrypt the master key with the derived key
       key = CryptoUtil.decryptSync(
         CryptoUtil.base642bin(attributes.encryptedKey),
         keyEncryptionKey,
         CryptoUtil.base642bin(attributes.keyDecryptionNonce),
       );
     } catch (e) {
-      _logger.severe('master-key decryption failed', e);
+      _logger.warning('master-key decryption failed: $e');
       throw Exception("Incorrect password");
     }
     await setKey(CryptoUtil.bin2base64(key));
@@ -452,10 +441,7 @@ class Configuration {
     final masterKey = getKey()!;
     final existingAttributes = getKeyAttributes();
 
-    // Create a recovery key
     final recoveryKey = CryptoUtil.generateKey();
-
-    // Encrypt master key and recovery key with each other
     final encryptedMasterKey = CryptoUtil.encryptSync(masterKey, recoveryKey);
     final encryptedRecoveryKey = CryptoUtil.encryptSync(recoveryKey, masterKey);
 
@@ -479,19 +465,16 @@ class Configuration {
     // Legacy users will have recoveryKey in the form of a hex string, while
     // newer users will have it as a mnemonic code
     if (recoveryKey.contains(' ')) {
-      // Check if user has entered a mnemonic code
       if (recoveryKey.split(' ').length != mnemonicKeyWordCount) {
         throw AssertionError(
           'recovery code should have $mnemonicKeyWordCount words',
         );
       }
-      // Convert mnemonic code to hex
       recoveryKey = bip39.mnemonicToEntropy(recoveryKey);
     }
     final attributes = getKeyAttributes();
     Uint8List masterKey;
     try {
-      // Decrypt the master key that was earlier encrypted with the recovery key
       masterKey = await CryptoUtil.decrypt(
         CryptoUtil.base642bin(attributes!.masterKeyEncryptedWithRecoveryKey!),
         CryptoUtil.hex2bin(recoveryKey),
@@ -521,6 +504,7 @@ class Configuration {
     return _cachedToken;
   }
 
+  @override
   bool isLoggedIn() {
     return getToken() != null;
   }
@@ -557,14 +541,6 @@ class Configuration {
     await _preferences.setInt(userIDKey, userID);
   }
 
-  Set<String> getPathsToBackUp() {
-    if (_preferences.containsKey(foldersToBackUpKey)) {
-      return _preferences.getStringList(foldersToBackUpKey)!.toSet();
-    } else {
-      return <String>{};
-    }
-  }
-
   Future<void> setKeyAttributes(KeyAttributes attributes) async {
     await _preferences.setString(keyAttributesKey, attributes.toJson());
   }
@@ -578,10 +554,19 @@ class Configuration {
     }
   }
 
+  @override
+  String decryptDeleteChallenge(String encryptedChallenge) {
+    final challenge = CryptoUtil.openSealSync(
+      CryptoUtil.base642bin(encryptedChallenge),
+      CryptoUtil.base642bin(getKeyAttributes()!.publicKey),
+      getSecretKey()!,
+    );
+    return utf8.decode(challenge);
+  }
+
   Future<void> setKey(String? key) async {
     _key = key;
     if (key == null) {
-      // Used to clear key from secure storage
       await _secureStorage.delete(key: keyKey);
     } else {
       await _secureStorage.write(key: keyKey, value: key);
@@ -591,7 +576,6 @@ class Configuration {
   Future<void> setSecretKey(String? secretKey) async {
     _secretKey = secretKey;
     if (secretKey == null) {
-      // Used to clear secret key from secure storage
       await _secureStorage.delete(key: secretKeyKey);
     } else {
       await _secureStorage.write(key: secretKeyKey, value: secretKey);
@@ -634,56 +618,6 @@ class Configuration {
 
   bool hasConfiguredAccount() {
     return isLoggedIn() && _key != null;
-  }
-
-  bool shouldBackupOverMobileData() {
-    if (_preferences.containsKey(keyShouldBackupOverMobileData)) {
-      return _preferences.getBool(keyShouldBackupOverMobileData)!;
-    } else {
-      return false;
-    }
-  }
-
-  Future<void> setBackupOverMobileData(bool value) async {
-    await _preferences.setBool(keyShouldBackupOverMobileData, value);
-    if (value) {
-      SyncService.instance.sync().ignore();
-    }
-  }
-
-  bool shouldBackupVideos() {
-    if (_preferences.containsKey(keyShouldBackupVideos)) {
-      return _preferences.getBool(keyShouldBackupVideos)!;
-    } else {
-      return true;
-    }
-  }
-
-  Future<void> setShouldBackupVideos(bool value) async {
-    await _preferences.setBool(keyShouldBackupVideos, value);
-    if (value) {
-      SyncService.instance.sync().ignore();
-    } else {
-      SyncService.instance.onVideoBackupPaused();
-    }
-  }
-
-  Future<bool> shouldShowLockScreen() async {
-    final bool isPin = await LockScreenSettings.instance.isPinSet();
-    final bool isPass = await LockScreenSettings.instance.isPasswordSet();
-    return isPin || isPass || shouldShowSystemLockScreen();
-  }
-
-  bool shouldShowSystemLockScreen() {
-    if (_preferences.containsKey(keyShowSystemLockScreen)) {
-      return _preferences.getBool(keyShowSystemLockScreen)!;
-    } else {
-      return false;
-    }
-  }
-
-  Future<void> setSystemLockScreen(bool value) {
-    return _preferences.setBool(keyShowSystemLockScreen, value);
   }
 
   void setVolatilePassword(String volatilePassword) {

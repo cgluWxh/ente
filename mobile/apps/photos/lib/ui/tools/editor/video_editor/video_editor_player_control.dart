@@ -1,6 +1,6 @@
 import "package:flutter/material.dart";
 import "package:photos/ente_theme_data.dart";
-import "package:video_editor/video_editor.dart";
+import "package:photos/ui/tools/editor/video_editor/video_editor_controller.dart";
 
 class VideoEditorPlayerControl extends StatelessWidget {
   const VideoEditorPlayerControl({super.key, required this.controller});
@@ -13,7 +13,7 @@ class VideoEditorPlayerControl extends StatelessWidget {
       tag: "video_editor_player_control",
       child: AnimatedBuilder(
         animation: Listenable.merge([controller, controller.video]),
-        builder: (_, __) {
+        builder: (_, _) {
           final duration = controller.trimmedDuration;
           Duration pos = controller.videoPosition - controller.startTrim;
           if (pos.isNegative) {

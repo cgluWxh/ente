@@ -1,14 +1,13 @@
 package usercache
 
 import (
-	"github.com/ente-io/museum/ente"
-	"github.com/ente-io/museum/ente/cache"
-	"github.com/ente-io/stacktrace"
+	"github.com/ente/museum/ente"
+	"github.com/ente/museum/ente/cache"
+	"github.com/ente/stacktrace"
 	"github.com/sirupsen/logrus"
 )
 
 func (c *Controller) GetUserFileCountWithCache(userID int64, app ente.App) (int64, error) {
-	// Check if the value is present in the cache
 	if count, ok := c.UserCache.GetFileCount(userID, app); ok {
 		// Cache hit, update the cache asynchronously
 		go func() {

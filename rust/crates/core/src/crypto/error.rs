@@ -1,137 +1,104 @@
-//! Crypto error types.
-
 use thiserror::Error;
 
-/// Errors that can occur during cryptographic operations.
 #[derive(Error, Debug)]
-pub enum CryptoError {
-    /// Base64 decoding failed.
-    #[error("Base64 decode error: {0}")]
-    Base64Decode(#[from] base64::DecodeError),
-
-    /// Hex decoding failed.
-    #[error("Hex decode error: {0}")]
-    HexDecode(#[from] hex::FromHexError),
-
-    /// Invalid key length.
+pub enum Error {
     #[error("Invalid key length: expected {expected}, got {actual}")]
-    InvalidKeyLength {
-        /// Expected length.
-        expected: usize,
-        /// Actual length.
-        actual: usize,
-    },
+    InvalidKeyLength { expected: usize, actual: usize },
 
-    /// Invalid nonce length.
     #[error("Invalid nonce length: expected {expected}, got {actual}")]
-    InvalidNonceLength {
-        /// Expected length.
-        expected: usize,
-        /// Actual length.
-        actual: usize,
-    },
+    InvalidNonceLength { expected: usize, actual: usize },
 
-    /// Invalid salt length.
     #[error("Invalid salt length: expected {expected}, got {actual}")]
-    InvalidSaltLength {
-        /// Expected length.
-        expected: usize,
-        /// Actual length.
-        actual: usize,
-    },
+    InvalidSaltLength { expected: usize, actual: usize },
 
-    /// Invalid header length.
     #[error("Invalid header length: expected {expected}, got {actual}")]
-    InvalidHeaderLength {
-        /// Expected length.
-        expected: usize,
-        /// Actual length.
-        actual: usize,
-    },
+    InvalidHeaderLength { expected: usize, actual: usize },
 
-    /// Ciphertext too short.
     #[error("Ciphertext too short: minimum {minimum}, got {actual}")]
-    CiphertextTooShort {
-        /// Minimum required length.
-        minimum: usize,
-        /// Actual length.
-        actual: usize,
-    },
+    CiphertextTooShort { minimum: usize, actual: usize },
 
-    /// Invalid memory or operation limits for key derivation.
     #[error("Invalid key derivation parameters: {0}")]
     InvalidKeyDerivationParams(String),
 
-    /// Key derivation failed.
     #[error("Key derivation failed")]
     KeyDerivationFailed,
 
-    /// Encryption failed.
     #[error("Encryption failed")]
     EncryptionFailed,
 
-    /// Decryption failed.
     #[error("Decryption failed")]
     DecryptionFailed,
 
-    /// Stream initialization failed.
     #[error("Stream initialization failed")]
     StreamInitFailed,
 
-    /// Stream push (encrypt) failed.
     #[error("Stream push failed")]
     StreamPushFailed,
 
-    /// Stream pull (decrypt) failed.
     #[error("Stream pull failed")]
     StreamPullFailed,
 
-    /// Stream was truncated (EOF before final tag).
     #[error("Stream truncated: EOF before final tag")]
     StreamTruncated,
 
-    /// Stream had trailing ciphertext after the final tag.
     #[error("Stream has trailing data after final tag")]
     StreamTrailingData,
 
-    /// Sealed box open failed.
     #[error("Sealed box open failed")]
     SealedBoxOpenFailed,
 
-    /// Invalid public key (e.g., small-order point).
     #[error("Invalid public key")]
     InvalidPublicKey,
 
-    /// Hash computation failed.
-    #[error("Hash computation failed")]
-    HashFailed,
-
-    /// JSON serialization or deserialization failed.
     #[error("JSON error: {0}")]
     Json(String),
 
-    /// Argon2 error.
     #[error("Argon2 error: {0:?}")]
     Argon2(argon2::Error),
 
-    /// AEAD error.
     #[error("AEAD error")]
     Aead,
 
-    /// Array conversion error.
     #[error("Array conversion error")]
     ArrayConversion,
 
-    /// IO error.
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }
 
-/// Result type for crypto operations.
-pub type Result<T> = std::result::Result<T, CryptoError>;
+impl Error {
+    // Bindings expose these strings to non-Rust callers.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Error::InvalidKeyLength { .. } => "invalid_key_length",
+            Error::InvalidNonceLength { .. } => "invalid_nonce_length",
+            Error::InvalidSaltLength { .. } => "invalid_salt_length",
+            Error::InvalidHeaderLength { .. } => "invalid_header_length",
+            Error::CiphertextTooShort { .. } => "ciphertext_too_short",
+            Error::InvalidKeyDerivationParams(_) => "invalid_kdf_params",
+            Error::KeyDerivationFailed => "key_derivation_failed",
+            Error::EncryptionFailed => "encryption_failed",
+            Error::DecryptionFailed => "decryption_failed",
+            Error::StreamInitFailed => "stream_init_failed",
+            Error::StreamPushFailed => "stream_push_failed",
+            Error::StreamPullFailed => "stream_pull_failed",
+            Error::StreamTruncated => "stream_truncated",
+            Error::StreamTrailingData => "stream_trailing_data",
+            Error::SealedBoxOpenFailed => "sealed_box_open_failed",
+            Error::InvalidPublicKey => "invalid_public_key",
+            Error::Json(_) => "json",
+            Error::Argon2(_) => "argon2",
+            Error::Aead => "aead",
+            Error::ArrayConversion => "array_conversion",
+            Error::Io(_) => "io",
+        }
+    }
+}
 
-impl From<std::array::TryFromSliceError> for CryptoError {
+pub type Result<T> = std::result::Result<T, Error>;
+
+impl From<std::array::TryFromSliceError> for Error {
     fn from(_: std::array::TryFromSliceError) -> Self {
-        CryptoError::ArrayConversion
+        Error::ArrayConversion
     }
 }

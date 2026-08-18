@@ -9,7 +9,7 @@ This page outlines the key features available in Ente Auth.
 
 ### Icons
 
-Ente Auth supports the icon pack provided by [simple-icons](https://github.com/simple-icons/simple-icons). If an icon you need is missing, please refer to the [docs/adding-icons](https://github.com/ente-io/ente/blob/main/mobile/apps/auth/docs/adding-icons.md) guide for instructions on how to contribute.
+Ente Auth supports the icon pack provided by [simple-icons](https://github.com/simple-icons/simple-icons). If an icon you need is missing, please refer to the [docs/adding-icons](https://github.com/ente/ente/blob/main/mobile/apps/auth/docs/adding-icons.md) guide for instructions on how to contribute.
 
 ### Search
 
@@ -127,6 +127,8 @@ Easily add or share entries using QR codes:
 
     This quickly adds the entry to Ente Auth. You can also import QR codes from images saved on your device by using the "Import from Gallery" button available in the QR scanner page itself.
 
-    > **Note**: The "Import from Gallery" feature is particularly useful when you have a screenshot or photo of a QR code. Simply save the QR code image to your device and use this feature to import it without needing to display it on another screen.
+    > [!NOTE]
+    >
+    > The "Import from Gallery" feature is particularly useful when you have a screenshot or photo of a QR code. Simply save the QR code image to your device and use this feature to import it without needing to display it on another screen.
 
 - **Show entry as QR code:** On all apps, you can long-press (mobile) or right-click (desktop) a code and select "QR". This allows you to easily share the complete entry (including the secret) with others by letting them scan the displayed QR code. This can also be used to easily add the same entry to another authenticator app or service.

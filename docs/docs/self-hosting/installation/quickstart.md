@@ -16,7 +16,7 @@ Check out the [requirements](/self-hosting/installation/requirements) page to ge
 Run this command on your terminal to setup Ente.
 
 ```sh
-sh -c "$(curl -fsSL https://raw.githubusercontent.com/ente-io/ente/main/server/quickstart.sh)"
+sh -c "$(curl -fsSL https://raw.githubusercontent.com/ente/ente/main/server/quickstart.sh)"
 ```
 
 The above `curl` command does the following:
@@ -30,8 +30,6 @@ Public album links are served by the Albums app at [http://localhost:3002](http:
 
 The data accessed by Museum is stored in `./data` folder inside `my-ente` directory. It contains extra configuration files that is to be used (push notification credentials, etc.)
 
-::: tip
-
-Check out [post-installation steps](/self-hosting/installation/post-install/) for further usage.
-
-:::
+> [!TIP]
+>
+> Check out [post-installation steps](/self-hosting/installation/post-install/) for further usage.

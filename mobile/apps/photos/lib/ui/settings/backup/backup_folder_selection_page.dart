@@ -2,6 +2,8 @@ import 'dart:math';
 
 import 'package:ente_components/ente_components.dart';
 import 'package:ente_pure_utils/ente_pure_utils.dart';
+import 'package:ente_strings/ente_strings.dart';
+import 'package:ente_ui/components/loading_widget.dart';
 import 'package:figma_squircle/figma_squircle.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -9,13 +11,11 @@ import 'package:intl/intl.dart';
 import 'package:logging/logging.dart';
 import 'package:photos/db/device_files_db.dart';
 import 'package:photos/db/files_db.dart';
-import 'package:photos/generated/l10n.dart';
 import 'package:photos/models/device_collection.dart';
 import 'package:photos/service_locator.dart';
 import 'package:photos/services/sync/remote_sync_service.dart';
-import 'package:photos/ui/common/loading_widget.dart';
+import 'package:photos/ui/components/collection_share_badge.dart';
 import 'package:photos/ui/settings/backup/backup_settings_screen.dart';
-import 'package:photos/ui/viewer/actions/select_all_status_icon.dart';
 import 'package:photos/ui/viewer/file/thumbnail_widget.dart';
 import 'package:photos/utils/dialog_util.dart';
 
@@ -23,9 +23,6 @@ class BackupFolderSelectionPage extends StatefulWidget {
   final bool isFirstBackup;
   final bool isOnboarding;
 
-  /// When true, skip the "only new backup" warning dialog.
-  /// This is used when coming from the "backup only new photos" toggle
-  /// to prevent recursive navigation back to backup settings.
   final bool fromOnlyNewPhotosToggle;
 
   const BackupFolderSelectionPage({
@@ -103,7 +100,7 @@ class _BackupFolderSelectionPageState extends State<BackupFolderSelectionPage> {
   }
 
   Future<void> updateFolderSettings() async {
-    final l10n = AppLocalizations.of(context);
+    final l10n = context.strings;
     final dialog = createProgressDialog(context, l10n.updatingFolderSelection);
     await dialog.show();
     try {
@@ -133,17 +130,19 @@ class _BackupFolderSelectionPageState extends State<BackupFolderSelectionPage> {
       }
 
       if (context.mounted) {
+        if (!mounted) return;
         Navigator.of(context).pop(true);
       }
     } catch (e, s) {
       _logger.severe("Failed to updated backup folder", e, s);
       await dialog.hide();
+      if (!mounted) return;
       await showGenericErrorDialog(context: context, error: e);
     }
   }
 
   Future<bool> _showOnlyNewBackupWarning(int onlyNewSinceEpoch) async {
-    final l10n = AppLocalizations.of(context);
+    final l10n = context.strings;
     final date = DateTime.fromMicrosecondsSinceEpoch(onlyNewSinceEpoch);
     final locale = Localizations.localeOf(context).languageCode;
     final formattedDate = DateFormat.yMMMd(locale).format(date);
@@ -155,7 +154,7 @@ class _BackupFolderSelectionPageState extends State<BackupFolderSelectionPage> {
         message: l10n.backupOnlyNewPhotosWarningBody(
           formattedDate: formattedDate,
         ),
-        illustration: Image.asset("assets/warning-green.png"),
+        illustration: Image.asset("assets/warning-grey.png"),
         actions: [
           ButtonComponent(
             label: l10n.updateSettings,
@@ -184,6 +183,7 @@ class _BackupFolderSelectionPageState extends State<BackupFolderSelectionPage> {
       return false;
     }
     if (result == _OnlyNewWarningAction.updateSettings) {
+      if (!mounted) return false;
       await routeToPage(context, const BackupSettingsScreen());
       return false;
     }
@@ -195,7 +195,7 @@ class _BackupFolderSelectionPageState extends State<BackupFolderSelectionPage> {
   }
 
   Widget _buildBottomNavigationBar() {
-    final l10n = AppLocalizations.of(context);
+    final l10n = context.strings;
     final colors = context.componentColors;
     final canSubmit = !(_treatAsOnboarding && _selectedDevicePathIDs.isEmpty);
 
@@ -236,7 +236,7 @@ class _BackupFolderSelectionPageState extends State<BackupFolderSelectionPage> {
   }
 
   Widget _buildScrollableBody() {
-    final l10n = AppLocalizations.of(context);
+    final l10n = context.strings;
     final colors = context.componentColors;
 
     return AppBarComponent(
@@ -281,7 +281,6 @@ class _BackupFolderSelectionPageState extends State<BackupFolderSelectionPage> {
         child: EnteLoadingWidget(),
       );
     }
-    _sortFiles();
 
     final screenWidth = MediaQuery.sizeOf(context).width;
     final crossAxisCount = max(screenWidth ~/ _maxThumbnailWidth, 3);
@@ -329,7 +328,7 @@ class _BackupFolderSelectionPageState extends State<BackupFolderSelectionPage> {
     double sideOfThumbnail,
   ) {
     final colors = context.componentColors;
-    final l10n = AppLocalizations.of(context);
+    final l10n = context.strings;
     final isSelected = _selectedDevicePathIDs.contains(deviceCollection.id);
     final importedCount = _pathIDToItemCount?[deviceCollection.id];
     final formattedCount = NumberFormat().format(deviceCollection.count);
@@ -375,28 +374,16 @@ class _BackupFolderSelectionPageState extends State<BackupFolderSelectionPage> {
                           ColoredBox(
                             color: Colors.black.withValues(alpha: 0.4),
                           ),
+                        if (isSelected)
+                          const Positioned(
+                            top: 8,
+                            right: 8,
+                            child: CollectionSelectedBadge(),
+                          ),
                       ],
                     ),
                   ),
                 ),
-                if (isSelected)
-                  Positioned(
-                    top: -6,
-                    right: -6,
-                    child: Container(
-                      padding: const EdgeInsets.all(0.75),
-                      decoration: BoxDecoration(
-                        color: colors.backgroundBase,
-                        shape: BoxShape.circle,
-                      ),
-                      child: SelectAllStatusIcon(
-                        isSelected: true,
-                        size: 18,
-                        selectedFillColor: colors.green,
-                        selectedTickColor: colors.backgroundBase,
-                      ),
-                    ),
-                  ),
               ],
             ),
           ),
@@ -438,23 +425,6 @@ class _BackupFolderSelectionPageState extends State<BackupFolderSelectionPage> {
       } else {
         _selectedDevicePathIDs.addAll(_allDevicePathIDs);
       }
-      _deviceCollections!.sort((first, second) {
-        return first.name.toLowerCase().compareTo(second.name.toLowerCase());
-      });
-    });
-  }
-
-  void _sortFiles() {
-    _deviceCollections!.sort((first, second) {
-      if (_selectedDevicePathIDs.contains(first.id) &&
-          _selectedDevicePathIDs.contains(second.id)) {
-        return first.name.toLowerCase().compareTo(second.name.toLowerCase());
-      } else if (_selectedDevicePathIDs.contains(first.id)) {
-        return -1;
-      } else if (_selectedDevicePathIDs.contains(second.id)) {
-        return 1;
-      }
-      return first.name.toLowerCase().compareTo(second.name.toLowerCase());
     });
   }
 

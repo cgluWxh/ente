@@ -1,12 +1,11 @@
+import "package:ente_strings/ente_strings.dart";
 import "package:intl/intl.dart";
-import "package:photos/generated/l10n.dart";
 import "package:photos/models/memories/memory.dart";
 import "package:photos/models/memories/smart_memory.dart";
 
 enum TimeMemoryKind { day, month, week, lastWeek, lastMonth }
 
 class TimeMemory extends SmartMemory {
-  // For computing the title
   final TimeMemoryKind kind;
   DateTime? day;
   DateTime? month;
@@ -52,7 +51,7 @@ class TimeMemory extends SmartMemory {
        );
 
   @override
-  String createTitle(AppLocalizations locals, String languageCode) {
+  String createTitle(StringsLocalizations locals, String languageCode) {
     switch (kind) {
       case TimeMemoryKind.day:
         final dayFormat = DateFormat.MMMd(languageCode).format(day!);

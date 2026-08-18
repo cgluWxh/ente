@@ -7,6 +7,7 @@ import 'package:bip39/bip39.dart' as bip39;
 import 'package:dio/dio.dart';
 import 'package:ente_crypto/ente_crypto.dart';
 import "package:ente_pure_utils/ente_pure_utils.dart";
+import "package:ente_strings/ente_strings.dart";
 import "package:flutter/foundation.dart";
 import 'package:flutter/material.dart';
 import 'package:logging/logging.dart';
@@ -17,7 +18,6 @@ import "package:photos/events/account_configured_event.dart";
 import 'package:photos/events/signed_in_event.dart';
 import 'package:photos/events/user_details_changed_event.dart';
 import 'package:photos/events/user_logged_out_event.dart';
-import 'package:photos/gateways/users/models/delete_account.dart';
 import 'package:photos/gateways/users/models/key_attributes.dart';
 import 'package:photos/gateways/users/models/key_gen_result.dart';
 import 'package:photos/gateways/users/models/sessions.dart';
@@ -25,8 +25,6 @@ import 'package:photos/gateways/users/models/set_keys_request.dart';
 import 'package:photos/gateways/users/models/set_recovery_key_request.dart';
 import "package:photos/gateways/users/models/srp.dart";
 import "package:photos/gateways/users/users_gateway.dart";
-import "package:photos/generated/l10n.dart";
-import "package:photos/l10n/l10n.dart";
 import "package:photos/models/account/two_factor.dart";
 import "package:photos/models/api/collection/user.dart";
 import 'package:photos/models/user_details.dart';
@@ -62,7 +60,7 @@ class UserService {
   static const kIsEmailMFAEnabled = "is_email_mfa_enabled";
 
   final SRP6GroupParameters kDefaultSrpGroup = SRP6StandardGroups.rfc5054_4096;
-  final _emailToPubKeyCache = TimedCache<String, String>(
+  final _publicKeyCache = TimedCache<String, String>(
     duration: const Duration(seconds: 10),
   );
 
@@ -100,7 +98,6 @@ class UserService {
     });
     _preferences = await SharedPreferences.getInstance();
     if (Configuration.instance.isLoggedIn() && !isLocalGalleryMode) {
-      // add artificial delay in refreshing 2FA status
       Future.delayed(
         const Duration(seconds: 5),
         () => {setTwoFactor(fetchTwoFactorStatus: true).ignore()},
@@ -116,10 +113,7 @@ class UserService {
     bool isResetPasswordScreen = false,
     String? purpose,
   }) async {
-    final dialog = createProgressDialog(
-      context,
-      AppLocalizations.of(context).pleaseWait,
-    );
+    final dialog = createProgressDialog(context, context.strings.pleaseWait);
     await dialog.show();
     try {
       await _gateway.sendOtt(
@@ -129,6 +123,7 @@ class UserService {
         isMobile: Platform.isIOS || Platform.isAndroid,
       );
       await dialog.hide();
+      if (!context.mounted) return;
       unawaited(
         Navigator.of(context).push(
           MaterialPageRoute(
@@ -146,49 +141,58 @@ class UserService {
     } on DioException catch (e) {
       await dialog.hide();
       _logger.info(e);
-      final String? enteErrCode = e.response?.data["code"];
+      final responseData = e.response?.data;
+      final Object? enteErrCode = responseData is Map
+          ? responseData["code"]
+          : null;
       if (enteErrCode != null && enteErrCode == "USER_ALREADY_REGISTERED") {
+        if (!context.mounted) return;
         unawaited(
           showAlertBottomSheet(
             context,
-            title: context.l10n.oops,
-            message: context.l10n.emailAlreadyRegistered,
-            assetPath: 'assets/warning-green.png',
+            title: context.strings.oops,
+            message: context.strings.emailAlreadyRegistered,
+            assetPath: 'assets/warning-grey.png',
           ),
         );
       } else if (enteErrCode != null && enteErrCode == "USER_NOT_REGISTERED") {
+        if (!context.mounted) return;
         unawaited(
           showAlertBottomSheet(
             context,
-            title: context.l10n.oops,
-            message: context.l10n.emailNotRegistered,
-            assetPath: 'assets/warning-green.png',
+            title: context.strings.oops,
+            message: context.strings.emailNotRegistered,
+            assetPath: 'assets/warning-grey.png',
           ),
         );
       } else if (enteErrCode == "USER_SIGNUP_INCOMPLETE") {
+        if (!context.mounted) return;
         unawaited(
           showAlertBottomSheet(
             context,
-            title: context.l10n.oops,
-            message: context.l10n.accountSetupIncompleteCreateAccount,
-            assetPath: 'assets/warning-green.png',
+            title: context.strings.oops,
+            message: context.strings.accountSetupIncompleteCreateAccount,
+            assetPath: 'assets/warning-grey.png',
           ),
         );
       } else if (e.response != null && e.response!.statusCode == 403) {
+        if (!context.mounted) return;
         unawaited(
           showAlertBottomSheet(
             context,
-            title: AppLocalizations.of(context).oops,
-            message: AppLocalizations.of(context).thisEmailIsAlreadyInUse,
-            assetPath: 'assets/warning-green.png',
+            title: context.strings.oops,
+            message: context.strings.thisEmailIsAlreadyInUse,
+            assetPath: 'assets/warning-grey.png',
           ),
         );
       } else {
+        if (!context.mounted) return;
         unawaited(showGenericErrorBottomSheet(context: context, error: e));
       }
     } catch (e, s) {
       await dialog.hide();
       _logger.severe("Failed to send OTT", e, s);
+      if (!context.mounted) return;
       unawaited(showGenericErrorBottomSheet(context: context, error: e));
     }
   }
@@ -201,16 +205,14 @@ class UserService {
     await _gateway.sendFeedback(feedback: feedback, type: type);
   }
 
-  // getPublicKey returns null value if email id is not
-  // associated with another ente account
   Future<String?> getPublicKey(String email) async {
-    final String? cachedPubKey = _emailToPubKeyCache.get(email);
+    final String? cachedPubKey = _publicKeyCache.get(email);
     if (cachedPubKey != null) {
       return cachedPubKey;
     }
     final publicKey = await _gateway.getPublicKey(email);
     if (publicKey != null) {
-      _emailToPubKeyCache.set(email, publicKey);
+      _publicKeyCache.set(email, publicKey);
     }
     return publicKey;
   }
@@ -250,7 +252,6 @@ class UserService {
       if (hasSecurityStatusChanged) {
         Bus.instance.fire(UserDetailsChangedEvent());
       }
-      // handle email change from different client
       if (userDetails.email != _config.getEmail()) {
         await setEmail(userDetails.email);
       }
@@ -279,13 +280,11 @@ class UserService {
     try {
       await _gateway.logout();
       await Configuration.instance.logout();
+      if (!context.mounted) return;
       Navigator.of(context).popUntil((route) => route.isFirst);
     } catch (e) {
-      // Determine if we should silently ignore the error and proceed with logout
       final bool silentlyIgnoreError =
-          // Token is already invalid (401 response)
           (e is DioException && e.response?.statusCode == 401) ||
-          // Custom endpoints where server might be non-existent or unavailable
           !endpointConfig.isProduction;
 
       if (silentlyIgnoreError) {
@@ -299,7 +298,6 @@ class UserService {
 
         await Configuration.instance.logout();
 
-        // Navigate to first route if context is still mounted
         if (context.mounted) {
           Navigator.of(context).popUntil((route) => route.isFirst);
         }
@@ -307,44 +305,14 @@ class UserService {
       }
 
       _logger.severe("Failed to logout", e);
-      //This future is for waiting for the dialog from which logout() is called
-      //to close and only then to show the error dialog.
-      Future.delayed(
-        const Duration(milliseconds: 150),
-        () => showGenericErrorBottomSheet(context: context, error: null),
+      // Let the logout dialog close before showing the error.
+      if (!context.mounted) return;
+      unawaited(
+        Future.delayed(const Duration(milliseconds: 150), () {
+          if (!context.mounted) return;
+          showGenericErrorBottomSheet(context: context, error: null);
+        }),
       );
-    }
-  }
-
-  Future<DeleteChallengeResponse?> getDeleteChallenge(
-    BuildContext context,
-  ) async {
-    try {
-      return await _gateway.getDeleteChallenge();
-    } catch (e) {
-      _logger.warning(e);
-      await showGenericErrorBottomSheet(context: context, error: e);
-      return null;
-    }
-  }
-
-  Future<void> deleteAccount(
-    BuildContext context,
-    String challengeResponse, {
-    required String reasonCategory,
-    required String feedback,
-  }) async {
-    try {
-      await _gateway.deleteAccount(
-        challengeResponse: challengeResponse,
-        reasonCategory: reasonCategory,
-        feedback: feedback,
-      );
-      // clear data
-      await Configuration.instance.logout();
-    } catch (e) {
-      _logger.warning(e);
-      rethrow;
     }
   }
 
@@ -355,7 +323,7 @@ class UserService {
   Future<void> onPassKeyVerified(BuildContext context, Map response) async {
     final ProgressDialog dialog = createProgressDialog(
       context,
-      context.l10n.pleaseWait,
+      context.strings.pleaseWait,
     );
     await dialog.show();
     try {
@@ -363,6 +331,7 @@ class UserService {
       await _saveConfiguration(response);
       if (userPassword == null) {
         await dialog.hide();
+        if (!context.mounted) return;
         // ignore: unawaited_futures
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(
@@ -378,17 +347,21 @@ class UserService {
             userPassword,
             Configuration.instance.getKeyAttributes()!,
           );
+          unawaited(installSourceService.autoAttributePendingSource());
         } else {
           throw Exception("unexpected response during passkey verification");
         }
         await dialog.hide();
         await flagService.tryRefreshFlags();
-        Navigator.of(context).popUntil((route) => route.isFirst);
+        if (context.mounted) {
+          Navigator.of(context).popUntil((route) => route.isFirst);
+        }
         Bus.instance.fire(AccountConfiguredEvent());
       }
     } catch (e) {
       _logger.warning(e);
       await dialog.hide();
+      if (!context.mounted) return;
       await showGenericErrorBottomSheet(context: context, error: e);
     }
   }
@@ -398,10 +371,7 @@ class UserService {
     String ott, {
     bool isResettingPasswordScreen = false,
   }) async {
-    final dialog = createProgressDialog(
-      context,
-      AppLocalizations.of(context).pleaseWait,
-    );
+    final dialog = createProgressDialog(context, context.strings.pleaseWait);
     await dialog.show();
     try {
       final responseData = await _gateway.verifyEmail(
@@ -439,6 +409,7 @@ class UserService {
           page = const PasswordEntryPage(mode: PasswordEntryMode.set);
         }
       }
+      if (!context.mounted) return;
       await Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(
           builder: (BuildContext context) {
@@ -451,33 +422,35 @@ class UserService {
       _logger.info(e);
       await dialog.hide();
       if (e.response != null && e.response!.statusCode == 410) {
+        if (!context.mounted) return;
         await showAlertBottomSheet(
           context,
-          title: AppLocalizations.of(context).oops,
-          message: AppLocalizations.of(context).yourVerificationCodeHasExpired,
-          assetPath: 'assets/warning-green.png',
+          title: context.strings.oops,
+          message: context.strings.yourVerificationCodeHasExpired,
+          assetPath: 'assets/warning-grey.png',
         );
+        if (!context.mounted) return;
         Navigator.of(context).pop();
       } else {
+        if (!context.mounted) return;
         // ignore: unawaited_futures
         showAlertBottomSheet(
           context,
-          title: AppLocalizations.of(context).incorrectCode,
-          message: AppLocalizations.of(
-            context,
-          ).sorryTheCodeYouveEnteredIsIncorrect,
-          assetPath: 'assets/warning-green.png',
+          title: context.strings.incorrectCode,
+          message: context.strings.sorryTheCodeYouveEnteredIsIncorrect,
+          assetPath: 'assets/warning-grey.png',
         );
       }
     } catch (e) {
       await dialog.hide();
       _logger.warning(e);
+      if (!context.mounted) return;
       // ignore: unawaited_futures
       showAlertBottomSheet(
         context,
-        title: AppLocalizations.of(context).oops,
-        message: AppLocalizations.of(context).verificationFailedPleaseTryAgain,
-        assetPath: 'assets/warning-green.png',
+        title: context.strings.oops,
+        message: context.strings.verificationFailedPleaseTryAgain,
+        assetPath: 'assets/warning-grey.png',
       );
     }
   }
@@ -500,62 +473,67 @@ class UserService {
     String email,
     String ott,
   ) async {
-    final dialog = createProgressDialog(
-      context,
-      AppLocalizations.of(context).pleaseWait,
-    );
+    final dialog = createProgressDialog(context, context.strings.pleaseWait);
     await dialog.show();
     try {
       await _gateway.changeEmail(email: email, ott: ott);
-      await dialog.hide();
-      showShortToast(
-        context,
-        AppLocalizations.of(context).emailChangedTo(newEmail: email),
-      );
       await setEmail(email);
-      Navigator.of(context).popUntil((route) => route.isFirst);
+      await dialog.hide();
+      if (context.mounted) {
+        showShortToast(
+          context,
+          context.strings.emailChangedTo(newEmail: email),
+        );
+        Navigator.of(context).popUntil((route) => route.isFirst);
+      }
       Bus.instance.fire(UserDetailsChangedEvent());
     } on DioException catch (e) {
       await dialog.hide();
       if (e.response != null && e.response!.statusCode == 403) {
+        if (!context.mounted) return;
         // ignore: unawaited_futures
         showAlertBottomSheet(
           context,
-          title: AppLocalizations.of(context).oops,
-          message: AppLocalizations.of(context).thisEmailIsAlreadyInUse,
-          assetPath: 'assets/warning-green.png',
+          title: context.strings.oops,
+          message: context.strings.thisEmailIsAlreadyInUse,
+          assetPath: 'assets/warning-grey.png',
         );
       } else {
+        if (!context.mounted) return;
         // ignore: unawaited_futures
         showAlertBottomSheet(
           context,
-          title: AppLocalizations.of(context).incorrectCode,
-          message: AppLocalizations.of(
-            context,
-          ).authenticationFailedPleaseTryAgain,
-          assetPath: 'assets/warning-green.png',
+          title: context.strings.incorrectCode,
+          message: context.strings.authenticationFailedPleaseTryAgain,
+          assetPath: 'assets/warning-grey.png',
         );
       }
     } catch (e) {
       await dialog.hide();
       _logger.warning(e);
+      if (!context.mounted) return;
       // ignore: unawaited_futures
       showAlertBottomSheet(
         context,
-        title: AppLocalizations.of(context).oops,
-        message: AppLocalizations.of(context).verificationFailedPleaseTryAgain,
-        assetPath: 'assets/warning-green.png',
+        title: context.strings.oops,
+        message: context.strings.verificationFailedPleaseTryAgain,
+        assetPath: 'assets/warning-grey.png',
       );
     }
   }
 
   Future<void> setAttributes(KeyGenResult result) async {
     try {
-      await registerOrUpdateSrp(result.loginKey);
       await _gateway.setKeyAttributes(result.keyAttributes);
       await _config.setKey(result.privateKeyAttributes.key);
       await _config.setSecretKey(result.privateKeyAttributes.secretKey);
       await _config.setKeyAttributes(result.keyAttributes);
+      try {
+        await registerOrUpdateSrp(result.loginKey);
+      } catch (_) {
+        // Keys are stored; password reentry after OTT login retries SRP setup.
+        _logger.warning("Continuing signup after SRP setup failure");
+      }
     } catch (e) {
       _logger.severe(e);
       rethrow;
@@ -594,7 +572,7 @@ class UserService {
         srpUserID: username,
         srpSalt: base64Encode(salt),
         srpVerifier: base64Encode(SRP6Util.encodeBigInt(v)),
-        srpA: base64Encode(SRP6Util.encodeBigInt(A!)),
+        srpA: base64Encode(SRP6Util.getPadded(A!, 512)),
         isUpdate: false,
       );
       final setupSRPResponse = await _gateway.setupSrp(request);
@@ -607,12 +585,12 @@ class UserService {
       if (setKeysRequest == null) {
         await _gateway.completeSrp(
           setupID: setupSRPResponse.setupID,
-          srpM1: base64Encode(SRP6Util.encodeBigInt(clientM!)),
+          srpM1: base64Encode(SRP6Util.getPadded(clientM!, 32)),
         );
       } else {
         await _gateway.updateSrp(
           setupID: setupSRPResponse.setupID,
-          srpM1: base64Encode(SRP6Util.encodeBigInt(clientM!)),
+          srpM1: base64Encode(SRP6Util.getPadded(clientM!, 32)),
           updatedKeyAttr: setKeysRequest.toMap(),
           logOutOtherDevices: logOutOtherDevices,
         );
@@ -708,6 +686,7 @@ class UserService {
           Configuration.instance.getKeyAttributes()!,
           keyEncryptionKey: keyEncryptionKey,
         );
+        unawaited(installSourceService.autoAttributePendingSource());
         await flagService.tryRefreshFlags();
         Configuration.instance.resetVolatilePassword();
         page = const HomeWidget();
@@ -717,9 +696,12 @@ class UserService {
     }
     await dialog.hide();
     if (page is HomeWidget) {
-      Navigator.of(context).popUntil((route) => route.isFirst);
+      if (context.mounted) {
+        Navigator.of(context).popUntil((route) => route.isFirst);
+      }
       Bus.instance.fire(AccountConfiguredEvent());
     } else {
+      if (!context.mounted) return;
       // ignore: unawaited_futures
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(
@@ -780,7 +762,7 @@ class UserService {
   ) async {
     final dialog = createProgressDialog(
       context,
-      AppLocalizations.of(context).authenticating,
+      context.strings.authenticating,
     );
     await dialog.show();
     try {
@@ -788,25 +770,26 @@ class UserService {
         sessionID: sessionID,
         code: code,
       );
-      await dialog.hide();
-      showShortToast(
-        context,
-        AppLocalizations.of(context).authenticationSuccessful,
-      );
       await _saveConfiguration(responseData);
-      await Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(
-          builder: (BuildContext context) {
-            return const PasswordReentryPage();
-          },
-        ),
-        (route) => route.isFirst,
-      );
+      await dialog.hide();
+      if (context.mounted) {
+        showShortToast(context, context.strings.authenticationSuccessful);
+        await Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(
+            builder: (BuildContext context) {
+              return const PasswordReentryPage();
+            },
+          ),
+          (route) => route.isFirst,
+        );
+      }
     } on DioException catch (e) {
       await dialog.hide();
       _logger.severe(e);
       if (e.response != null && e.response!.statusCode == 404) {
-        showToast(context, AppLocalizations.of(context).sessionExpired);
+        if (!context.mounted) return;
+        showToast(context, context.strings.sessionExpired);
+        if (!context.mounted) return;
         await Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(
             builder: (BuildContext context) {
@@ -816,27 +799,25 @@ class UserService {
           (route) => route.isFirst,
         );
       } else {
+        if (!context.mounted) return;
         // ignore: unawaited_futures
         showAlertBottomSheet(
           context,
-          title: AppLocalizations.of(context).incorrectCode,
-          message: AppLocalizations.of(
-            context,
-          ).authenticationFailedPleaseTryAgain,
-          assetPath: 'assets/warning-green.png',
+          title: context.strings.incorrectCode,
+          message: context.strings.authenticationFailedPleaseTryAgain,
+          assetPath: 'assets/warning-grey.png',
         );
       }
     } catch (e) {
       await dialog.hide();
       _logger.severe(e);
+      if (!context.mounted) return;
       // ignore: unawaited_futures
       showAlertBottomSheet(
         context,
-        title: AppLocalizations.of(context).oops,
-        message: AppLocalizations.of(
-          context,
-        ).authenticationFailedPleaseTryAgain,
-        assetPath: 'assets/warning-green.png',
+        title: context.strings.oops,
+        message: context.strings.authenticationFailedPleaseTryAgain,
+        assetPath: 'assets/warning-grey.png',
       );
     }
   }
@@ -846,10 +827,7 @@ class UserService {
     String sessionID,
     TwoFactorType type,
   ) async {
-    final dialog = createProgressDialog(
-      context,
-      AppLocalizations.of(context).pleaseWait,
-    );
+    final dialog = createProgressDialog(context, context.strings.pleaseWait);
     await dialog.show();
     try {
       _logger.info("recovering two factor");
@@ -859,6 +837,7 @@ class UserService {
       );
 
       await dialog.hide();
+      if (!context.mounted) return;
       // ignore: unawaited_futures
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(
@@ -877,7 +856,9 @@ class UserService {
       await dialog.hide();
       _logger.severe('error while recovery 2fa', e);
       if (e.response != null && e.response!.statusCode == 404) {
-        showToast(context, AppLocalizations.of(context).sessionExpired);
+        if (!context.mounted) return;
+        showToast(context, context.strings.sessionExpired);
+        if (!context.mounted) return;
         // ignore: unawaited_futures
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(
@@ -888,26 +869,26 @@ class UserService {
           (route) => route.isFirst,
         );
       } else {
+        if (!context.mounted) return;
         // ignore: unawaited_futures
         showAlertBottomSheet(
           context,
-          title: AppLocalizations.of(context).oops,
-          message: AppLocalizations.of(
-            context,
-          ).somethingWentWrongPleaseTryAgain,
-          assetPath: 'assets/warning-green.png',
+          title: context.strings.oops,
+          message: context.strings.somethingWentWrongPleaseTryAgain,
+          assetPath: 'assets/warning-grey.png',
         );
       }
     } catch (e) {
       _logger.severe('unexpected error while recovery 2fa', e);
       await dialog.hide();
       _logger.severe(e);
+      if (!context.mounted) return;
       // ignore: unawaited_futures
       showAlertBottomSheet(
         context,
-        title: AppLocalizations.of(context).oops,
-        message: AppLocalizations.of(context).somethingWentWrongPleaseTryAgain,
-        assetPath: 'assets/warning-green.png',
+        title: context.strings.oops,
+        message: context.strings.somethingWentWrongPleaseTryAgain,
+        assetPath: 'assets/warning-grey.png',
       );
     } finally {
       await dialog.hide();
@@ -922,10 +903,7 @@ class UserService {
     String encryptedSecret,
     String secretDecryptionNonce,
   ) async {
-    final dialog = createProgressDialog(
-      context,
-      AppLocalizations.of(context).pleaseWait,
-    );
+    final dialog = createProgressDialog(context, context.strings.pleaseWait);
     await dialog.show();
     String secret;
     try {
@@ -946,13 +924,12 @@ class UserService {
       );
     } catch (e) {
       await dialog.hide();
+      if (!context.mounted) return;
       await showAlertBottomSheet(
         context,
-        title: AppLocalizations.of(context).incorrectRecoveryKey,
-        message: AppLocalizations.of(
-          context,
-        ).theRecoveryKeyYouEnteredIsIncorrect,
-        assetPath: 'assets/warning-green.png',
+        title: context.strings.incorrectRecoveryKey,
+        message: context.strings.theRecoveryKeyYouEnteredIsIncorrect,
+        assetPath: 'assets/warning-grey.png',
       );
       return;
     }
@@ -962,26 +939,30 @@ class UserService {
         secret: secret,
         twoFactorType: twoFactorTypeToString(type),
       );
-      await dialog.hide();
-      showShortToast(
-        context,
-        AppLocalizations.of(context).twofactorAuthenticationSuccessfullyReset,
-      );
       await _saveConfiguration(responseData);
-      // ignore: unawaited_futures
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(
-          builder: (BuildContext context) {
-            return const PasswordReentryPage();
-          },
-        ),
-        (route) => route.isFirst,
-      );
+      await dialog.hide();
+      if (context.mounted) {
+        showShortToast(
+          context,
+          context.strings.twofactorAuthenticationSuccessfullyReset,
+        );
+        // ignore: unawaited_futures
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(
+            builder: (BuildContext context) {
+              return const PasswordReentryPage();
+            },
+          ),
+          (route) => route.isFirst,
+        );
+      }
     } on DioException catch (e) {
       await dialog.hide();
       _logger.severe("error during recovery", e);
       if (e.response != null && e.response!.statusCode == 404) {
-        showToast(context, AppLocalizations.of(context).sessionExpired);
+        if (!context.mounted) return;
+        showToast(context, context.strings.sessionExpired);
+        if (!context.mounted) return;
         // ignore: unawaited_futures
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(
@@ -992,26 +973,26 @@ class UserService {
           (route) => route.isFirst,
         );
       } else {
+        if (!context.mounted) return;
         // ignore: unawaited_futures
         showAlertBottomSheet(
           context,
-          title: AppLocalizations.of(context).oops,
-          message: AppLocalizations.of(
-            context,
-          ).somethingWentWrongPleaseTryAgain,
-          assetPath: 'assets/warning-green.png',
+          title: context.strings.oops,
+          message: context.strings.somethingWentWrongPleaseTryAgain,
+          assetPath: 'assets/warning-grey.png',
         );
       }
     } catch (e) {
       await dialog.hide();
       _logger.severe('unexpcted error during recovery', e);
 
+      if (!context.mounted) return;
       // ignore: unawaited_futures
       showAlertBottomSheet(
         context,
-        title: AppLocalizations.of(context).oops,
-        message: AppLocalizations.of(context).somethingWentWrongPleaseTryAgain,
-        assetPath: 'assets/warning-green.png',
+        title: context.strings.oops,
+        message: context.strings.somethingWentWrongPleaseTryAgain,
+        assetPath: 'assets/warning-grey.png',
       );
     } finally {
       await dialog.hide();
@@ -1019,14 +1000,12 @@ class UserService {
   }
 
   Future<void> setupTwoFactor(BuildContext context, Completer completer) async {
-    final dialog = createProgressDialog(
-      context,
-      AppLocalizations.of(context).pleaseWait,
-    );
+    final dialog = createProgressDialog(context, context.strings.pleaseWait);
     await dialog.show();
     try {
       final responseData = await _gateway.setupTwoFactor();
       await dialog.hide();
+      if (!context.mounted) return;
       unawaited(
         routeToPage(
           context,
@@ -1054,13 +1033,12 @@ class UserService {
     try {
       recoveryKey = await getOrCreateRecoveryKey(context);
     } catch (e) {
+      if (!context.mounted) return false;
       await showGenericErrorBottomSheet(context: context, error: e);
       return false;
     }
-    final dialog = createProgressDialog(
-      context,
-      AppLocalizations.of(context).verifying,
-    );
+    if (!context.mounted) return false;
+    final dialog = createProgressDialog(context, context.strings.verifying);
     await dialog.show();
     final encryptionResult = CryptoUtil.encryptSync(
       CryptoUtil.base642bin(secret),
@@ -1078,7 +1056,9 @@ class UserService {
       );
       await setTwoFactor(value: true);
       await dialog.hide();
-      Navigator.pop(context);
+      if (context.mounted) {
+        Navigator.pop(context);
+      }
       Bus.instance.fire(UserDetailsChangedEvent());
       return true;
     } catch (e, s) {
@@ -1086,26 +1066,24 @@ class UserService {
       _logger.severe("Failed to enable 2FA", e, s);
       if (e is DioException) {
         if (e.response != null && e.response!.statusCode == 401) {
+          if (!context.mounted) return false;
           // ignore: unawaited_futures
           showAlertBottomSheet(
             context,
-            title: AppLocalizations.of(context).incorrectCode,
-            message: AppLocalizations.of(
-              context,
-            ).pleaseVerifyTheCodeYouHaveEntered,
-            assetPath: 'assets/warning-green.png',
+            title: context.strings.incorrectCode,
+            message: context.strings.pleaseVerifyTheCodeYouHaveEntered,
+            assetPath: 'assets/warning-grey.png',
           );
           return false;
         }
       }
+      if (!context.mounted) return false;
       // ignore: unawaited_futures
       showAlertBottomSheet(
         context,
-        title: AppLocalizations.of(context).somethingWentWrong,
-        message: AppLocalizations.of(
-          context,
-        ).pleaseContactSupportIfTheProblemPersists,
-        assetPath: 'assets/warning-green.png',
+        title: context.strings.somethingWentWrong,
+        message: context.strings.pleaseContactSupportIfTheProblemPersists,
+        assetPath: 'assets/warning-grey.png',
       );
     }
     return false;
@@ -1114,7 +1092,7 @@ class UserService {
   Future<void> disableTwoFactor(BuildContext context) async {
     final dialog = createProgressDialog(
       context,
-      AppLocalizations.of(context).disablingTwofactorAuthentication,
+      context.strings.disablingTwofactorAuthentication,
     );
     await dialog.show();
     try {
@@ -1122,20 +1100,20 @@ class UserService {
       await setTwoFactor(value: false);
       await dialog.hide();
       Bus.instance.fire(UserDetailsChangedEvent());
+      if (!context.mounted) return;
       showShortToast(
         context,
-        AppLocalizations.of(context).twofactorAuthenticationHasBeenDisabled,
+        context.strings.twofactorAuthenticationHasBeenDisabled,
       );
     } catch (e) {
       await dialog.hide();
       _logger.severe("Failed to disabled 2FA", e);
+      if (!context.mounted) return;
       await showAlertBottomSheet(
         context,
-        title: AppLocalizations.of(context).somethingWentWrong,
-        message: AppLocalizations.of(
-          context,
-        ).pleaseContactSupportIfTheProblemPersists,
-        assetPath: 'assets/warning-green.png',
+        title: context.strings.somethingWentWrong,
+        message: context.strings.pleaseContactSupportIfTheProblemPersists,
+        assetPath: 'assets/warning-grey.png',
       );
     }
   }
@@ -1160,10 +1138,7 @@ class UserService {
         .getKeyAttributes()!
         .recoveryKeyEncryptedWithMasterKey;
     if (encryptedRecoveryKey == null || encryptedRecoveryKey.isEmpty) {
-      final dialog = createProgressDialog(
-        context,
-        AppLocalizations.of(context).pleaseWait,
-      );
+      final dialog = createProgressDialog(context, context.strings.pleaseWait);
       await dialog.show();
       try {
         final keyAttributes = await _config.createNewRecoveryKey();
@@ -1206,6 +1181,8 @@ class UserService {
     } else {
       await Configuration.instance.setToken(responseData["token"]);
     }
+    final isSignUp = responseData["encryptedToken"] == null;
+    unawaited(installSourceService.autoAttributeSource(isSignUp: isSignUp));
 
     // Initialize shared feed cutoff at login; feed path keeps the same fallback.
     localSettings.getOrCreateSharedPhotoFeedCutoffTime();
@@ -1251,174 +1228,50 @@ class UserService {
     }
   }
 
-  /// Returns Contacts(Users) that are relevant to the account owner.
-  /// Note: "User" refers to the account owner in the points below.
-  /// This includes:
-  /// 	- Collaborators and viewers of collections owned by user
-  ///   - Owners of collections shared to user.
-  ///   - All collaborators of collections in which user is a collaborator or
-  ///     a viewer.
-  ///   - All family members of user.
-  ///   - All contacts linked to a person.
-  List<User> getRelevantContacts() {
-    final List<User> relevantUsers = [];
-    final existingEmails = <String>{};
+  List<UserSuggestion> getRelevantContacts() {
     final int ownerID = Configuration.instance.getUserID()!;
     final String ownerEmail = Configuration.instance.getEmail()!;
-    existingEmails.add(ownerEmail);
+    final suggestions = <UserSuggestion>[];
+    final existingEmails = <String>{ownerEmail};
+
+    void add(String email, {int? userID}) {
+      if (email.isNotEmpty && existingEmails.add(email)) {
+        suggestions.add(UserSuggestion(email, userID: userID));
+      }
+    }
 
     for (final c in CollectionsService.instance.getActiveCollections()) {
-      // Add collaborators and viewers of collections owned by user
       if (c.owner.id == ownerID) {
         for (final User u in c.sharees) {
-          if (u.id != null && u.email.isNotEmpty) {
-            if (!existingEmails.contains(u.email)) {
-              relevantUsers.add(u);
-              existingEmails.add(u.email);
-            }
-          }
+          add(u.email, userID: u.id);
         }
-      } else if (c.owner.id != null && c.owner.email.isNotEmpty) {
-        // Add owners of collections shared with user
-        if (!existingEmails.contains(c.owner.email)) {
-          relevantUsers.add(c.owner);
-          existingEmails.add(c.owner.email);
-        }
-        // Add collaborators of collections shared with user where user is a
-        // viewer or a collaborator
-        for (final User u in c.sharees) {
-          if (u.id != null &&
-              u.email.isNotEmpty &&
+      } else if (c.owner.email.isNotEmpty) {
+        add(c.owner.email, userID: c.owner.id);
+        final participates = c.sharees.any(
+          (u) =>
               u.email == ownerEmail &&
-              (u.isAdmin || u.isCollaborator || u.isViewer)) {
-            for (final User u in c.sharees) {
-              if (u.id != null &&
-                  u.email.isNotEmpty &&
-                  (u.isCollaborator || u.isAdmin)) {
-                if (!existingEmails.contains(u.email)) {
-                  relevantUsers.add(u);
-                  existingEmails.add(u.email);
-                }
-              }
-            }
-            break;
-          }
-        }
-      }
-    }
-
-    // Add user's family members
-    final cachedUserDetails = getCachedUserDetails();
-    if (cachedUserDetails?.familyData?.members?.isNotEmpty ?? false) {
-      for (final member in cachedUserDetails!.familyData!.members!) {
-        if (!existingEmails.contains(member.email)) {
-          relevantUsers.add(User(email: member.email));
-          existingEmails.add(member.email);
-        }
-      }
-    }
-
-    // Add contacts linked to people
-    final cachedEmailToPartialPersonData =
-        PersonService.instance.emailToPartialPersonDataMapCache;
-    for (final email in cachedEmailToPartialPersonData.keys) {
-      if (!existingEmails.contains(email)) {
-        relevantUsers.add(User(email: email));
-        existingEmails.add(email);
-      }
-    }
-
-    return relevantUsers;
-  }
-
-  /// Returns emails of Users that are relevant to the account owner.
-  /// Note: "User" refers to the account owner in the points below.
-  /// This includes:
-  /// 	- Collaborators and viewers of collections owned by user
-  ///   - Owners of collections shared to user.
-  ///   - All collaborators of collections in which user is a collaborator or
-  ///     a viewer.
-  ///   - All family members of user.
-  ///   - All contacts linked to a person.
-  Set<String> getEmailIDsOfRelevantContacts() {
-    final emailIDs = <String>{};
-
-    final int ownerID = Configuration.instance.getUserID()!;
-    final String ownerEmail = Configuration.instance.getEmail()!;
-
-    for (final c in CollectionsService.instance.getActiveCollections()) {
-      // Add collaborators and viewers of collections owned by user
-      if (c.owner.id == ownerID) {
-        for (final User u in c.sharees) {
-          if (u.id != null && u.email.isNotEmpty) {
-            if (!emailIDs.contains(u.email)) {
-              emailIDs.add(u.email);
+              (u.isAdmin || u.isCollaborator || u.isViewer),
+        );
+        if (participates) {
+          for (final User u in c.sharees) {
+            if (u.isCollaborator || u.isAdmin) {
+              add(u.email, userID: u.id);
             }
           }
         }
-      } else if (c.owner.id != null && c.owner.email.isNotEmpty) {
-        // Add owners of collections shared with user
-        if (!emailIDs.contains(c.owner.email)) {
-          emailIDs.add(c.owner.email);
-        }
-        // Add collaborators of collections shared with user where user is a
-        // viewer or a collaborator
-        for (final User u in c.sharees) {
-          if (u.id != null &&
-              u.email.isNotEmpty &&
-              u.email == ownerEmail &&
-              (u.isAdmin || u.isCollaborator || u.isViewer)) {
-            for (final User u in c.sharees) {
-              if (u.id != null &&
-                  u.email.isNotEmpty &&
-                  (u.isCollaborator || u.isAdmin)) {
-                if (!emailIDs.contains(u.email)) {
-                  emailIDs.add(u.email);
-                }
-              }
-            }
-            break;
-          }
-        }
       }
     }
 
-    // Add user's family members
-    final cachedUserDetails = getCachedUserDetails();
-    if (cachedUserDetails?.familyData?.members?.isNotEmpty ?? false) {
-      for (final member in cachedUserDetails!.familyData!.members!) {
-        if (!emailIDs.contains(member.email)) {
-          emailIDs.add(member.email);
-        }
-      }
+    final familyMembers =
+        getCachedUserDetails()?.familyData?.members ?? const <FamilyMember>[];
+    for (final member in familyMembers) {
+      add(member.email, userID: member.userID);
     }
 
-    // Add contacts linked to people
-    final cachedEmailToPartialPersonData =
-        PersonService.instance.emailToPartialPersonDataMapCache;
-    for (final email in cachedEmailToPartialPersonData.keys) {
-      if (!emailIDs.contains(email)) {
-        emailIDs.add(email);
-      }
+    for (final email in PersonService.instance.cachedLinkedPersonEmails) {
+      add(email);
     }
 
-    emailIDs.remove(ownerEmail);
-
-    return emailIDs;
-  }
-
-  Set<String> getEmailIDsOfFamilyMember() {
-    final emailIDs = <String>{};
-
-    final cachedUserDetails = getCachedUserDetails();
-    if (cachedUserDetails?.familyData?.members?.isNotEmpty ?? false) {
-      for (final member in cachedUserDetails!.familyData!.members!) {
-        if (member.email.isNotEmpty) {
-          emailIDs.add(member.email);
-        }
-      }
-    }
-
-    return emailIDs;
+    return suggestions;
   }
 }

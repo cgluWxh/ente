@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useEffectEvent, useRef } from "react";
 
 type BrowserBackCleanupAction = "back" | "replace";
 
@@ -50,11 +50,7 @@ export interface UseBrowserBackCloseOptions {
     enabled?: boolean;
 }
 
-/**
- * Adds a transient history entry while an overlay is open, so mobile browser
- * back gestures close the overlay before navigating away or closing a parent
- * viewer.
- */
+// Push a transient entry so browser back closes the overlay first.
 export const useBrowserBackClose = ({
     open,
     onClose,
@@ -62,8 +58,7 @@ export const useBrowserBackClose = ({
     enabled = true,
 }: UseBrowserBackCloseOptions) => {
     const markerRef = useRef<string | undefined>(undefined);
-    const onCloseRef = useRef(onClose);
-    onCloseRef.current = onClose;
+    const onBrowserBack = useEffectEvent(onClose);
 
     const clearBrowserBackState = useCallback(
         (action: BrowserBackCleanupAction = "replace") => {
@@ -116,7 +111,7 @@ export const useBrowserBackClose = ({
             }
 
             markerRef.current = undefined;
-            onCloseRef.current();
+            onBrowserBack();
         };
 
         window.addEventListener("popstate", handlePopState);

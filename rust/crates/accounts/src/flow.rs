@@ -1,25 +1,14 @@
-//! Shared account flow orchestration built on [`crate::client::AccountsClient`].
-//!
-//! This layer is intended for interactive CLI/e2e flows. Callers that need
-//! raw server `code/message/status` should prefer [`crate::client::AccountsClient`].
-
-use base64::{
-    Engine,
-    engine::general_purpose::{STANDARD, URL_SAFE},
-};
-use ente_core::{
-    auth::{
-        self, DecryptedSecrets, GeneratedSrpSetup, KeyAttributes as CoreKeyAttributes,
-        KeyDerivationStrength, derive_kek, generate_keys_with_strength, generate_srp_setup,
-        get_recovery_key,
-    },
-    crypto::{self, SecretVec, secretbox},
-};
+use ente_core::b64;
+use ente_core::crypto::{self, SecretVec, secretbox};
 use std::fmt;
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use crate::{
+    auth::{
+        self, DecryptedSecrets, GeneratedSrpSetup, KeyDerivationStrength, derive_kek,
+        generate_keys_with_strength, generate_srp_setup_with_login_key, get_recovery_key,
+    },
     client::AccountsClient,
     error::{Error, Result},
     models::{
@@ -33,12 +22,9 @@ use crate::{
 
 const SRP_A_LEN: usize = 512;
 
-/// Purpose of an OTP prompt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OtpPurpose {
-    /// OTP for login/email MFA.
     Login,
-    /// OTP for signup.
     Signup,
 }
 
@@ -51,52 +37,34 @@ impl OtpPurpose {
     }
 }
 
-/// Purpose of a TOTP prompt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TotpPurpose {
-    /// TOTP during login.
     Login,
-    /// TOTP during initial setup.
     Setup,
 }
 
-/// Supported second-factor methods during login.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SecondFactorMethod {
-    /// TOTP auth app code.
     Totp,
-    /// Passkey verification.
     Passkey,
 }
 
-/// UI adapter for interactive account flows.
 pub trait AuthFlowUi {
-    /// Read an email OTP from the user.
     fn read_email_otp(&mut self, email: &str, purpose: OtpPurpose, resent: bool) -> Result<String>;
-    /// Read a TOTP code from the user.
     fn read_totp_code(&mut self, purpose: TotpPurpose) -> Result<String>;
-    /// Display a retryable error and continue.
     fn report_retryable_error(&mut self, message: &str) -> Result<()>;
-    /// Let the user choose a second-factor method.
     fn choose_second_factor(
         &mut self,
         methods: &[SecondFactorMethod],
     ) -> Result<SecondFactorMethod>;
-    /// Show a passkey verification URL.
     fn present_passkey_verification(&mut self, url: &str) -> Result<()>;
-    /// Wait until the user has attempted passkey verification.
     fn wait_for_passkey_verification(&mut self) -> Result<()>;
-    /// Present a TOTP secret to the user.
     fn present_totp_secret(&mut self, secret_code: &str, qr_code: &str) -> Result<()>;
 }
 
-/// Parameters for account creation.
 pub struct CreateAccountParams {
-    /// Email address to register.
     pub email: String,
-    /// Password used for signup.
     pub password: Zeroizing<String>,
-    /// Optional referral source.
     pub source: Option<String>,
 }
 
@@ -110,11 +78,8 @@ impl fmt::Debug for CreateAccountParams {
     }
 }
 
-/// Parameters for login.
 pub struct LoginParams {
-    /// Email address to login.
     pub email: String,
-    /// Password for the account.
     pub password: Zeroizing<String>,
 }
 
@@ -127,11 +92,8 @@ impl fmt::Debug for LoginParams {
     }
 }
 
-/// Parameters for TOTP setup.
 pub struct SetupTwoFactorParams {
-    /// Master key for the account.
     pub master_key: SecretVec,
-    /// Optional cached key attributes.
     pub key_attributes: Option<KeyAttributes>,
 }
 
@@ -144,17 +106,11 @@ impl fmt::Debug for SetupTwoFactorParams {
     }
 }
 
-/// Parameters for password changes.
 pub struct ChangePasswordParams {
-    /// Email address of the account.
     pub email: String,
-    /// New password.
     pub password: Zeroizing<String>,
-    /// Current master key bytes.
     pub master_key: SecretVec,
-    /// Current key attributes.
     pub key_attributes: KeyAttributes,
-    /// Whether to logout other devices.
     pub log_out_other_devices: bool,
 }
 
@@ -170,11 +126,8 @@ impl fmt::Debug for ChangePasswordParams {
     }
 }
 
-/// Result of a password-change flow.
 pub struct ChangePasswordResult {
-    /// Updated key attributes.
     pub key_attributes: KeyAttributes,
-    /// Fresh SRP attributes fetched from remote.
     pub srp_attributes: SrpAttributes,
 }
 
@@ -187,11 +140,8 @@ impl fmt::Debug for ChangePasswordResult {
     }
 }
 
-/// Parameters for session-validity checks.
 pub struct CheckSessionValidityParams {
-    /// Email address used to fetch fresh SRP attributes.
     pub email: String,
-    /// Locally saved SRP attributes.
     pub local_srp_attributes: SrpAttributes,
 }
 
@@ -204,32 +154,21 @@ impl fmt::Debug for CheckSessionValidityParams {
     }
 }
 
-/// Outcome of a session-validity check.
 #[derive(Debug)]
 #[expect(clippy::large_enum_variant)]
 pub enum SessionValidity {
-    /// Token is invalid.
     Invalid,
-    /// Session is valid and password unchanged.
     Valid,
-    /// Session is valid but password was changed elsewhere.
     ValidButPasswordChanged {
-        /// Fresh key attributes from remote.
         updated_key_attributes: KeyAttributes,
-        /// Fresh SRP attributes from remote.
         updated_srp_attributes: SrpAttributes,
     },
 }
 
-/// Authenticated account returned by shared flows.
 pub struct AuthenticatedAccount {
-    /// User ID.
     pub user_id: i64,
-    /// Full key attributes.
     pub key_attributes: KeyAttributes,
-    /// Decrypted account secrets.
     pub secrets: AccountSecrets,
-    /// Recovery key, if derivable.
     pub recovery_key: Option<String>,
 }
 
@@ -244,13 +183,9 @@ impl fmt::Debug for AuthenticatedAccount {
     }
 }
 
-/// Result of setting up TOTP.
 pub struct SetupTwoFactorResult {
-    /// Secret code shown to the user.
     pub secret_code: String,
-    /// QR code payload.
     pub qr_code: String,
-    /// Recovery key used to encrypt the TOTP secret.
     pub recovery_key: String,
 }
 
@@ -264,11 +199,8 @@ impl fmt::Debug for SetupTwoFactorResult {
     }
 }
 
-/// Result of creating a new recovery key for old accounts.
 pub struct RecoveryKeyResult {
-    /// Fresh recovery key in hex.
     pub recovery_key: String,
-    /// Updated key attributes including recovery-key fields.
     pub key_attributes: KeyAttributes,
 }
 
@@ -281,7 +213,6 @@ impl fmt::Debug for RecoveryKeyResult {
     }
 }
 
-/// Shared high-level account flow orchestration.
 pub struct AuthFlow<'a, U> {
     client: &'a AccountsClient,
     ui: &'a mut U,
@@ -291,12 +222,10 @@ impl<'a, U> AuthFlow<'a, U>
 where
     U: AuthFlowUi,
 {
-    /// Create a new shared account flow instance.
     pub fn new(client: &'a AccountsClient, ui: &'a mut U) -> Self {
         Self { client, ui }
     }
 
-    /// Create a new account.
     pub async fn create_account(
         &mut self,
         params: CreateAccountParams,
@@ -305,10 +234,28 @@ where
             .await
     }
 
-    /// Login to an existing account.
-    pub async fn login(&mut self, params: LoginParams) -> Result<AuthenticatedAccount> {
-        crypto::init()?;
+    pub async fn create_account_with_otp(
+        &mut self,
+        params: CreateAccountParams,
+        otp: &str,
+    ) -> Result<AuthenticatedAccount> {
+        let email = params.email;
+        let password = params.password;
+        let verification = self
+            .client
+            .verify_email(&email, otp, params.source.as_deref())
+            .await?;
 
+        self.finish_verified_signup(
+            email,
+            password,
+            verification,
+            KeyDerivationStrength::Sensitive,
+        )
+        .await
+    }
+
+    pub async fn login(&mut self, params: LoginParams) -> Result<AuthenticatedAccount> {
         let srp_attrs = self.client.get_srp_attributes(&params.email).await?;
 
         let (auth_response, kek) = if srp_attrs.is_email_mfa_enabled {
@@ -322,8 +269,8 @@ where
             let kek = derive_kek(
                 &params.password,
                 &srp_attrs.kek_salt,
-                srp_attrs.mem_limit as u32,
-                srp_attrs.ops_limit as u32,
+                srp_attrs.mem_limit,
+                srp_attrs.ops_limit,
             )?;
             (response, kek)
         } else {
@@ -338,13 +285,10 @@ where
         self.build_authenticated_account(auth_response, &kek)
     }
 
-    /// Setup TOTP two-factor authentication.
     pub async fn setup_two_factor(
         &mut self,
         params: SetupTwoFactorParams,
     ) -> Result<SetupTwoFactorResult> {
-        crypto::init()?;
-
         let key_attributes = if let Some(key_attributes) = params.key_attributes {
             key_attributes
         } else {
@@ -352,16 +296,10 @@ where
                 .get_session_validity()
                 .await?
                 .key_attributes
-                .ok_or_else(|| {
-                    Error::AuthenticationFailed(
-                        "Account keys are not available for two-factor setup".into(),
-                    )
-                })?
+                .ok_or(Error::MissingKeyAttributes)?
         };
 
-        let recovery_key =
-            get_recovery_key(&params.master_key, &to_core_key_attributes(&key_attributes))
-                .map_err(Error::from)?;
+        let recovery_key = get_recovery_key(&params.master_key, &key_attributes)?;
 
         let secret = self.client.setup_two_factor().await?;
         self.ui
@@ -378,7 +316,7 @@ where
                         recovery_key,
                     });
                 }
-                Err(error) if error.is_http_status(&[400, 401]) => {
+                Err(Error::IncorrectTotp) => {
                     self.ui.report_retryable_error(
                         "Incorrect TOTP code. Enter the current code from your authenticator app and try again.",
                     )?;
@@ -388,43 +326,42 @@ where
         }
     }
 
-    /// Change the account password and update SRP/key attributes on remote.
     pub async fn change_password(
         &self,
         params: ChangePasswordParams,
     ) -> Result<ChangePasswordResult> {
-        crypto::init()?;
+        self.change_password_with_strength(params, KeyDerivationStrength::Sensitive)
+            .await
+    }
 
-        let (updated_key_attributes_core, _) = auth::generate_key_attributes_for_new_password(
-            &params.master_key,
-            &to_core_key_attributes(&params.key_attributes),
-            &params.password,
-        )?;
+    async fn change_password_with_strength(
+        &self,
+        params: ChangePasswordParams,
+        key_derivation_strength: KeyDerivationStrength,
+    ) -> Result<ChangePasswordResult> {
+        let (updated_key_attributes, login_key) =
+            auth::generate_key_attributes_for_new_password_with_strength(
+                &params.master_key,
+                &params.key_attributes,
+                &params.password,
+                key_derivation_strength,
+            )?;
 
-        let updated_key_attributes = to_api_key_attributes(&updated_key_attributes_core);
         let updated_key_attr = UpdatedKeyAttr::from(&updated_key_attributes);
 
-        let kek = derive_kek(
-            &params.password,
-            &updated_key_attributes.kek_salt,
-            updated_key_attributes.mem_limit as u32,
-            updated_key_attributes.ops_limit as u32,
-        )?;
-
         let srp_user_id = Uuid::new_v4();
-        let srp_setup = generate_srp_setup(&kek, &srp_user_id.to_string())?;
-        let update = self
-            .complete_srp_update(
-                &srp_user_id,
-                &srp_setup,
-                &updated_key_attr,
-                params.log_out_other_devices,
-            )
-            .await?;
+        let srp_setup = generate_srp_setup_with_login_key(&login_key, &srp_user_id.to_string())?;
+        self.complete_srp_update(
+            &srp_user_id,
+            &srp_setup,
+            &updated_key_attr,
+            params.log_out_other_devices,
+        )
+        .await?;
 
         let srp_attributes = self.client.get_srp_attributes(&params.email).await?;
 
-        let expected_salt = STANDARD.encode(&srp_setup.srp_salt);
+        let expected_salt = b64::encode(&srp_setup.srp_salt);
         let mut mismatches = Vec::new();
         if srp_attributes.srp_user_id != srp_user_id {
             mismatches.push("srpUserID");
@@ -442,13 +379,11 @@ where
             mismatches.push("opsLimit");
         }
         if !mismatches.is_empty() {
-            return Err(Error::AuthenticationFailed(format!(
+            return Err(Error::Protocol(format!(
                 "Remote SRP attributes mismatched after password change: {}",
                 mismatches.join(", ")
             )));
         }
-
-        let _ = update;
 
         Ok(ChangePasswordResult {
             key_attributes: updated_key_attributes,
@@ -456,14 +391,13 @@ where
         })
     }
 
-    /// Check if the current session is still valid and whether password changed elsewhere.
     pub async fn check_session_validity(
         &self,
         params: CheckSessionValidityParams,
     ) -> Result<SessionValidity> {
         let remote = match self.client.get_session_validity().await {
             Ok(remote) => remote,
-            Err(error) if error.is_http_status(&[401]) => return Ok(SessionValidity::Invalid),
+            Err(Error::SessionInvalid) => return Ok(SessionValidity::Invalid),
             Err(error) => return Err(error),
         };
 
@@ -480,12 +414,10 @@ where
         Ok(SessionValidity::Valid)
     }
 
-    /// Change the authenticated user's email address.
     pub async fn change_email(&self, email: &str, ott: &str) -> Result<()> {
         self.client.change_email(email, ott).await
     }
 
-    /// Create a new recovery key for old accounts that do not have one yet.
     pub async fn create_recovery_key(
         &self,
         master_key: &[u8],
@@ -521,7 +453,6 @@ where
         })
     }
 
-    /// Get the server-side two-factor recovery payload for a pending second-factor session.
     pub async fn get_two_factor_recovery(
         &self,
         session_id: &str,
@@ -532,7 +463,6 @@ where
             .await
     }
 
-    /// Remove/bypass the second factor using a recovery key input.
     pub async fn recover_two_factor(
         &self,
         two_factor_type: TwoFactorType,
@@ -541,30 +471,31 @@ where
         recovery_key_mnemonic_or_hex: &str,
     ) -> Result<TwoFactorAuthorizationResponse> {
         let recovery_key = auth::recovery_key_from_mnemonic_or_hex(recovery_key_mnemonic_or_hex)?;
-        let encrypted_secret = crypto::decode_b64(&recovery_response.encrypted_secret)?;
-        let nonce = crypto::decode_b64(&recovery_response.secret_decryption_nonce)?;
-        let secret = secretbox::decrypt(&encrypted_secret, &nonce, &recovery_key)
-            .map_err(|_| Error::AuthenticationFailed("Incorrect recovery key".into()))?;
+        let encrypted_secret = b64::decode(&recovery_response.encrypted_secret)?;
+        let nonce = b64::decode(&recovery_response.secret_decryption_nonce)?;
+        let secret = secretbox::decrypt(
+            &encrypted_secret,
+            &crypto::Nonce::try_from_slice(&nonce)?,
+            &crypto::Key::try_from_slice(&recovery_key)?,
+        )
+        .map_err(|_| Error::IncorrectRecoveryKey)?;
         let request = RemoveTwoFactorRequest {
             session_id: session_id.to_string(),
             secret: String::from_utf8(secret)
-                .map_err(|e| Error::Crypto(format!("invalid recovery secret: {e}")))?,
+                .map_err(|e| Error::Protocol(format!("invalid recovery secret: {e}")))?,
             two_factor_type,
         };
         self.client.remove_two_factor(&request).await
     }
 
-    /// Return whether the authenticated user has TOTP enabled.
     pub async fn get_two_factor_status(&self) -> Result<bool> {
         self.client.get_two_factor_status().await
     }
 
-    /// Disable TOTP for the authenticated user.
     pub async fn disable_two_factor(&self) -> Result<()> {
         self.client.disable_two_factor().await
     }
 
-    /// Get passkey recovery status.
     pub async fn get_passkey_recovery_status(&self) -> Result<bool> {
         Ok(self
             .client
@@ -573,29 +504,29 @@ where
             .is_passkey_recovery_enabled)
     }
 
-    /// Configure passkey recovery by encrypting a reset secret with the user's recovery key.
     pub async fn configure_passkey_recovery(
         &self,
         secret: &str,
         recovery_key_mnemonic_or_hex: &str,
     ) -> Result<()> {
         let recovery_key = auth::recovery_key_from_mnemonic_or_hex(recovery_key_mnemonic_or_hex)?;
-        let encrypted = secretbox::encrypt_with_key(secret.as_bytes(), &recovery_key)?;
+        let encrypted = secretbox::encrypt(
+            secret.as_bytes(),
+            &crypto::Key::try_from_slice(&recovery_key)?,
+        );
         let request = ConfigurePasskeyRecoveryRequest {
             secret: secret.to_string(),
-            user_secret_cipher: crypto::encode_b64(&encrypted.ciphertext),
-            user_secret_nonce: crypto::encode_b64(&encrypted.nonce),
+            user_secret_cipher: b64::encode(&encrypted.encrypted_data),
+            user_secret_nonce: b64::encode(encrypted.nonce.as_bytes()),
         };
         self.client.configure_passkey_recovery(&request).await
     }
 
-    /// Get the accounts-token response used to open the accounts broker.
     pub async fn get_accounts_token(&self) -> Result<crate::models::AccountsTokenResponse> {
         self.client.get_accounts_token().await
     }
 
-    /// Poll passkey verification status.
-    pub async fn check_passkey_status(&self, session_id: &str) -> Result<AuthResponse> {
+    pub async fn check_passkey_status(&self, session_id: &str) -> Result<Option<AuthResponse>> {
         self.client.check_passkey_status(session_id).await
     }
 
@@ -607,11 +538,10 @@ where
         let key_attributes = auth_response
             .key_attributes
             .clone()
-            .ok_or_else(|| Error::AuthenticationFailed("No key attributes".into()))?;
-        let core_key_attributes = to_core_key_attributes(&key_attributes);
-        let secrets = decrypt_auth_response(&auth_response, &core_key_attributes, kek)?;
-        let public_key = crypto::decode_b64(&key_attributes.public_key)?;
-        let recovery_key = get_recovery_key(&secrets.master_key, &core_key_attributes).ok();
+            .ok_or(Error::MissingKeyAttributes)?;
+        let secrets = decrypt_auth_response(&auth_response, &key_attributes, kek)?;
+        let public_key = b64::decode(&key_attributes.public_key)?;
+        let recovery_key = get_recovery_key(&secrets.master_key, &key_attributes).ok();
 
         Ok(AuthenticatedAccount {
             user_id: auth_response.id,
@@ -631,8 +561,6 @@ where
         params: CreateAccountParams,
         key_derivation_strength: KeyDerivationStrength,
     ) -> Result<AuthenticatedAccount> {
-        crypto::init()?;
-
         let email = params.email;
         let password = params.password;
 
@@ -644,8 +572,19 @@ where
             .verify_email_otp(&email, OtpPurpose::Signup, params.source.as_deref())
             .await?;
 
+        self.finish_verified_signup(email, password, verification, key_derivation_strength)
+            .await
+    }
+
+    async fn finish_verified_signup(
+        &self,
+        email: String,
+        password: Zeroizing<String>,
+        verification: AuthResponse,
+        key_derivation_strength: KeyDerivationStrength,
+    ) -> Result<AuthenticatedAccount> {
         let token = verification.token.clone().ok_or_else(|| {
-            Error::AuthenticationFailed("Signup verification did not return a session token".into())
+            Error::Protocol("Signup verification did not return a session token".into())
         })?;
 
         self.client.set_auth_token(Some(token.clone()));
@@ -657,16 +596,14 @@ where
             || session_validity.has_set_keys
             || session_validity.key_attributes.is_some()
         {
-            return Err(Error::AuthenticationFailed(
-                "Email already has server-side key state; use the existing account or recover the incomplete signup instead of creating a new account.".into(),
-            ));
+            return Err(Error::AccountAlreadyExists);
         }
 
         let key_gen_result = generate_keys_with_strength(&password, key_derivation_strength)?;
         let srp_user_id = Uuid::new_v4();
         let srp_setup =
-            generate_srp_setup(&key_gen_result.key_encryption_key, &srp_user_id.to_string())?;
-        let key_attributes = to_api_key_attributes(&key_gen_result.key_attributes);
+            generate_srp_setup_with_login_key(&key_gen_result.login_key, &srp_user_id.to_string())?;
+        let key_attributes = key_gen_result.key_attributes.clone();
 
         self.client
             .set_user_key_attributes(key_attributes.clone())
@@ -683,9 +620,9 @@ where
 
         let secrets = AccountSecrets {
             token: decode_plain_token(&token)?.into_vec(),
-            master_key: crypto::decode_b64(&key_gen_result.private_key_attributes.key)?,
-            secret_key: crypto::decode_b64(&key_gen_result.private_key_attributes.secret_key)?,
-            public_key: crypto::decode_b64(&key_attributes.public_key)?,
+            master_key: b64::decode(&key_gen_result.private_key_attributes.key)?,
+            secret_key: b64::decode(&key_gen_result.private_key_attributes.secret_key)?,
+            public_key: b64::decode(&key_attributes.public_key)?,
         };
 
         Ok(AuthenticatedAccount {
@@ -713,17 +650,12 @@ where
             let otp = self.ui.read_email_otp(email, purpose, resent)?;
             match self.client.verify_email(email, &otp, source).await {
                 Ok(response) => return Ok(response),
-                Err(error) if error.is_http_status(&[400, 401]) => {
+                Err(Error::IncorrectEmailVerificationCode) => {
                     self.ui
                         .report_retryable_error("Incorrect email verification code. Try again.")?;
                     resent = false;
                 }
-                Err(error) if error.is_http_status(&[429]) => {
-                    return Err(Error::AuthenticationFailed(
-                        "Too many incorrect email verification attempts. Please wait and request a new code.".into(),
-                    ));
-                }
-                Err(error) if error.is_http_status(&[410]) => {
+                Err(Error::EmailVerificationCodeExpired) => {
                     self.client
                         .send_otp(email, purpose.as_api_purpose())
                         .await?;
@@ -756,25 +688,15 @@ where
     async fn verify_totp(&mut self, auth_response: &AuthResponse) -> Result<AuthResponse> {
         let session_id = auth_response
             .get_two_factor_session_id()
-            .ok_or_else(|| Error::AuthenticationFailed("No 2FA session ID".into()))?;
+            .ok_or_else(|| Error::Protocol("No 2FA session ID".into()))?;
 
         loop {
             let code = self.ui.read_totp_code(TotpPurpose::Login)?;
             match self.client.verify_totp(session_id, &code).await {
                 Ok(response) => return Ok(response),
-                Err(error) if error.is_http_status(&[400, 401]) => {
+                Err(Error::IncorrectTotp) => {
                     self.ui
                         .report_retryable_error("Incorrect TOTP code. Try again.")?;
-                }
-                Err(error) if error.is_http_status(&[429]) => {
-                    return Err(Error::AuthenticationFailed(
-                        "Too many incorrect TOTP attempts. Please restart login.".into(),
-                    ));
-                }
-                Err(error) if error.is_http_status(&[404, 410]) => {
-                    return Err(Error::AuthenticationFailed(
-                        "TOTP session expired. Please restart login.".into(),
-                    ));
                 }
                 Err(error) => return Err(error),
             }
@@ -786,7 +708,7 @@ where
             .passkey_session_id
             .as_ref()
             .filter(|session_id| !session_id.is_empty())
-            .ok_or_else(|| Error::AuthenticationFailed("No passkey session ID".into()))?;
+            .ok_or_else(|| Error::Protocol("No passkey session ID".into()))?;
 
         let accounts_url = auth_response
             .accounts_url
@@ -805,15 +727,8 @@ where
 
         loop {
             self.ui.wait_for_passkey_verification()?;
-            match self.client.check_passkey_status(passkey_session_id).await {
-                Ok(result) => return Ok(result),
-                Err(error) if error.is_http_status(&[400]) => {}
-                Err(error) if error.is_http_status(&[404, 410]) => {
-                    return Err(Error::AuthenticationFailed(
-                        "Passkey session expired. Please restart login.".into(),
-                    ));
-                }
-                Err(error) => return Err(error),
+            if let Some(response) = self.client.check_passkey_status(passkey_session_id).await? {
+                return Ok(response);
             }
         }
     }
@@ -828,26 +743,26 @@ where
             &srp_setup.srp_salt,
             &srp_setup.login_sub_key,
         )?;
-        let srp_a = STANDARD.encode(pad_left(&srp_session.public_a(), SRP_A_LEN));
+        let srp_a = b64::encode(&pad_left(&srp_session.public_a(), SRP_A_LEN));
 
         let response = self
             .client
             .setup_srp(&SetupSrpRequest {
                 srp_user_id: srp_user_id.to_string(),
-                srp_salt: STANDARD.encode(&srp_setup.srp_salt),
-                srp_verifier: STANDARD.encode(&srp_setup.srp_verifier),
+                srp_salt: b64::encode(&srp_setup.srp_salt),
+                srp_verifier: b64::encode(&srp_setup.srp_verifier),
                 srp_a,
             })
             .await?;
 
-        let srp_b = STANDARD.decode(&response.srp_b)?;
-        let srp_m1 = STANDARD.encode(srp_session.compute_m1(&srp_b)?);
+        let srp_b = b64::decode(&response.srp_b)?;
+        let srp_m1 = b64::encode(&srp_session.compute_m1(&srp_b)?);
         let complete = self
             .client
             .complete_srp_setup(&response.setup_id, &srp_m1)
             .await?;
-        let srp_m2 = STANDARD.decode(&complete.srp_m2)?;
-        srp_session.verify_m2(&srp_m2).map_err(Error::from)?;
+        let srp_m2 = b64::decode(&complete.srp_m2)?;
+        srp_session.verify_m2(&srp_m2)?;
         Ok(())
     }
 
@@ -863,20 +778,20 @@ where
             &srp_setup.srp_salt,
             &srp_setup.login_sub_key,
         )?;
-        let srp_a = STANDARD.encode(pad_left(&srp_session.public_a(), SRP_A_LEN));
+        let srp_a = b64::encode(&pad_left(&srp_session.public_a(), SRP_A_LEN));
 
         let setup = self
             .client
             .setup_srp(&SetupSrpRequest {
                 srp_user_id: srp_user_id.to_string(),
-                srp_salt: STANDARD.encode(&srp_setup.srp_salt),
-                srp_verifier: STANDARD.encode(&srp_setup.srp_verifier),
+                srp_salt: b64::encode(&srp_setup.srp_salt),
+                srp_verifier: b64::encode(&srp_setup.srp_verifier),
                 srp_a,
             })
             .await?;
 
-        let srp_b = STANDARD.decode(&setup.srp_b)?;
-        let srp_m1 = STANDARD.encode(srp_session.compute_m1(&srp_b)?);
+        let srp_b = b64::decode(&setup.srp_b)?;
+        let srp_m1 = b64::encode(&srp_session.compute_m1(&srp_b)?);
 
         let response = self
             .client
@@ -888,13 +803,12 @@ where
             })
             .await?;
 
-        let srp_m2 = STANDARD.decode(&response.srp_m2)?;
-        srp_session.verify_m2(&srp_m2).map_err(Error::from)?;
+        let srp_m2 = b64::decode(&response.srp_m2)?;
+        srp_session.verify_m2(&srp_m2)?;
         Ok(response)
     }
 }
 
-/// Build the passkey verification URL for an accounts broker.
 pub fn build_passkey_verification_url(
     accounts_url: &str,
     passkey_session_id: &str,
@@ -930,64 +844,20 @@ fn pad_left(data: &[u8], len: usize) -> Vec<u8> {
     padded
 }
 
-fn to_core_key_attributes(attributes: &KeyAttributes) -> CoreKeyAttributes {
-    CoreKeyAttributes {
-        kek_salt: attributes.kek_salt.clone(),
-        encrypted_key: attributes.encrypted_key.clone(),
-        key_decryption_nonce: attributes.key_decryption_nonce.clone(),
-        public_key: attributes.public_key.clone(),
-        encrypted_secret_key: attributes.encrypted_secret_key.clone(),
-        secret_key_decryption_nonce: attributes.secret_key_decryption_nonce.clone(),
-        mem_limit: Some(attributes.mem_limit as u32),
-        ops_limit: Some(attributes.ops_limit as u32),
-        master_key_encrypted_with_recovery_key: attributes
-            .master_key_encrypted_with_recovery_key
-            .clone(),
-        master_key_decryption_nonce: attributes.master_key_decryption_nonce.clone(),
-        recovery_key_encrypted_with_master_key: attributes
-            .recovery_key_encrypted_with_master_key
-            .clone(),
-        recovery_key_decryption_nonce: attributes.recovery_key_decryption_nonce.clone(),
-    }
-}
-
-fn to_api_key_attributes(attributes: &CoreKeyAttributes) -> KeyAttributes {
-    KeyAttributes {
-        kek_salt: attributes.kek_salt.clone(),
-        kek_hash: None,
-        encrypted_key: attributes.encrypted_key.clone(),
-        key_decryption_nonce: attributes.key_decryption_nonce.clone(),
-        public_key: attributes.public_key.clone(),
-        encrypted_secret_key: attributes.encrypted_secret_key.clone(),
-        secret_key_decryption_nonce: attributes.secret_key_decryption_nonce.clone(),
-        mem_limit: attributes.mem_limit.unwrap_or_default() as i32,
-        ops_limit: attributes.ops_limit.unwrap_or_default() as i32,
-        master_key_encrypted_with_recovery_key: attributes
-            .master_key_encrypted_with_recovery_key
-            .clone(),
-        master_key_decryption_nonce: attributes.master_key_decryption_nonce.clone(),
-        recovery_key_encrypted_with_master_key: attributes
-            .recovery_key_encrypted_with_master_key
-            .clone(),
-        recovery_key_decryption_nonce: attributes.recovery_key_decryption_nonce.clone(),
-    }
-}
-
 fn decode_plain_token(token: &str) -> Result<SecretVec> {
-    let bytes = URL_SAFE
-        .decode(token)
-        .or_else(|_| STANDARD.decode(token))
-        .map_err(|e| Error::Crypto(format!("token: {e}")))?;
+    let bytes = b64::decode_url_safe(token)
+        .or_else(|_| b64::decode(token))
+        .map_err(|e| Error::Decode(format!("token: {e}")))?;
     Ok(SecretVec::new(bytes))
 }
 
 fn decrypt_auth_response(
     auth_response: &AuthResponse,
-    key_attributes: &CoreKeyAttributes,
+    key_attributes: &KeyAttributes,
     kek: &[u8],
 ) -> Result<DecryptedSecrets> {
     if let Some(encrypted_token) = auth_response.encrypted_token.as_deref() {
-        auth::decrypt_secrets(kek, key_attributes, encrypted_token).map_err(Error::from)
+        auth::decrypt_secrets(kek, key_attributes, encrypted_token)
     } else if let Some(token) = auth_response.token.as_deref() {
         let (master_key, secret_key) = auth::decrypt_keys_only(kek, key_attributes)?;
         Ok(DecryptedSecrets {
@@ -996,7 +866,7 @@ fn decrypt_auth_response(
             token: decode_plain_token(token)?,
         })
     } else {
-        Err(Error::AuthenticationFailed("No token in response".into()))
+        Err(Error::Protocol("No token in response".into()))
     }
 }
 
@@ -1006,7 +876,7 @@ fn validate_remote_srp_attributes(
     srp_setup: &GeneratedSrpSetup,
     key_attributes: &KeyAttributes,
 ) -> Result<()> {
-    let expected_salt = STANDARD.encode(&srp_setup.srp_salt);
+    let expected_salt = b64::encode(&srp_setup.srp_salt);
     let mut mismatches = Vec::new();
 
     if remote.srp_user_id != *srp_user_id {
@@ -1026,7 +896,7 @@ fn validate_remote_srp_attributes(
     }
 
     if !mismatches.is_empty() {
-        return Err(Error::AuthenticationFailed(format!(
+        return Err(Error::Protocol(format!(
             "Remote SRP attributes mismatched after signup: {}",
             mismatches.join(", ")
         )));
@@ -1040,13 +910,17 @@ fn encrypt_two_factor_secret(
     recovery_key_hex: &str,
     code: &str,
 ) -> Result<EnableTwoFactorRequest> {
-    let recovery_key = crypto::decode_hex(recovery_key_hex)?;
-    let encrypted = secretbox::encrypt_with_key(secret_code.as_bytes(), &recovery_key)?;
+    let recovery_key =
+        hex::decode(recovery_key_hex).map_err(|e| Error::Decode(format!("recovery_key: {e}")))?;
+    let encrypted = secretbox::encrypt(
+        secret_code.as_bytes(),
+        &crypto::Key::try_from_slice(&recovery_key)?,
+    );
 
     Ok(EnableTwoFactorRequest {
         code: code.to_string(),
-        encrypted_two_factor_secret: crypto::encode_b64(&encrypted.ciphertext),
-        two_factor_secret_decryption_nonce: crypto::encode_b64(&encrypted.nonce),
+        encrypted_two_factor_secret: b64::encode(&encrypted.encrypted_data),
+        two_factor_secret_decryption_nonce: b64::encode(encrypted.nonce.as_bytes()),
     })
 }
 
@@ -1204,10 +1078,10 @@ mod tests {
         }
     }
 
-    fn make_client(base_url: String) -> AccountsClient {
+    fn make_client(origin: String) -> AccountsClient {
         AccountsClient::new(
             AccountsClientConfig::new("io.ente.photos")
-                .with_base_url(base_url)
+                .with_origin(origin)
                 .with_user_agent("ente-accounts-test"),
         )
         .unwrap()
@@ -1220,11 +1094,15 @@ mod tests {
         let key_gen =
             auth::generate_keys_with_strength(password, auth::KeyDerivationStrength::Interactive)
                 .unwrap();
-        let key_attributes = to_api_key_attributes(&key_gen.key_attributes);
+        let key_attributes = key_gen.key_attributes.clone();
         let encrypted_token = {
-            let public_key = crypto::decode_b64(&key_attributes.public_key).unwrap();
-            let sealed = crypto::sealed::seal(token.as_bytes(), &public_key).unwrap();
-            crypto::encode_b64(&sealed)
+            let public_key = b64::decode(&key_attributes.public_key).unwrap();
+            let sealed = crypto::sealed::seal(
+                token.as_bytes(),
+                &crypto::PublicKey::try_from_slice(&public_key).unwrap(),
+            )
+            .unwrap();
+            b64::encode(&sealed)
         };
 
         (
@@ -1238,8 +1116,6 @@ mod tests {
 
     #[tokio::test]
     async fn login_with_email_mfa_and_totp_decrypts_account() {
-        crypto::init().unwrap();
-
         let password = "hunter2";
         let (key_attributes, encrypted_token, recovery_key, _, _) =
             build_login_response(password, "plain-auth-token");
@@ -1260,7 +1136,7 @@ mod tests {
                 serde_json::json!({
                     "attributes": {
                         "srpUserID": Uuid::new_v4(),
-                        "srpSalt": STANDARD.encode([1u8; 16]),
+                        "srpSalt": b64::encode(&[1u8; 16]),
                         "memLimit": key_attributes.mem_limit,
                         "opsLimit": key_attributes.ops_limit,
                         "kekSalt": key_attributes.kek_salt,
@@ -1328,13 +1204,11 @@ mod tests {
 
     #[tokio::test]
     async fn login_with_email_mfa_treats_429_as_terminal_error() {
-        crypto::init().unwrap();
-
         let password = "hunter2";
         let key_gen =
             auth::generate_keys_with_strength(password, auth::KeyDerivationStrength::Interactive)
                 .unwrap();
-        let key_attributes = to_api_key_attributes(&key_gen.key_attributes);
+        let key_attributes = key_gen.key_attributes.clone();
 
         let mut server = Server::new_async().await;
         let mut ui = ScriptedUi::new();
@@ -1351,7 +1225,7 @@ mod tests {
                 serde_json::json!({
                     "attributes": {
                         "srpUserID": Uuid::new_v4(),
-                        "srpSalt": STANDARD.encode([1u8; 16]),
+                        "srpSalt": b64::encode(&[1u8; 16]),
                         "memLimit": key_attributes.mem_limit,
                         "opsLimit": key_attributes.ops_limit,
                         "kekSalt": key_attributes.kek_salt,
@@ -1388,12 +1262,7 @@ mod tests {
             .unwrap_err();
 
         match error {
-            Error::AuthenticationFailed(message) => {
-                assert_eq!(
-                    message,
-                    "Too many incorrect email verification attempts. Please wait and request a new code."
-                );
-            }
+            Error::EmailVerificationRateLimited => {}
             other => panic!("unexpected error: {other:?}"),
         }
         assert!(ui.retryable_errors.is_empty());
@@ -1405,13 +1274,11 @@ mod tests {
 
     #[tokio::test]
     async fn login_with_totp_treats_404_as_expired_session() {
-        crypto::init().unwrap();
-
         let password = "hunter2";
         let key_gen =
             auth::generate_keys_with_strength(password, auth::KeyDerivationStrength::Interactive)
                 .unwrap();
-        let key_attributes = to_api_key_attributes(&key_gen.key_attributes);
+        let key_attributes = key_gen.key_attributes.clone();
 
         let mut server = Server::new_async().await;
         let mut ui = ScriptedUi::new();
@@ -1429,7 +1296,7 @@ mod tests {
                 serde_json::json!({
                     "attributes": {
                         "srpUserID": Uuid::new_v4(),
-                        "srpSalt": STANDARD.encode([1u8; 16]),
+                        "srpSalt": b64::encode(&[1u8; 16]),
                         "memLimit": key_attributes.mem_limit,
                         "opsLimit": key_attributes.ops_limit,
                         "kekSalt": key_attributes.kek_salt,
@@ -1479,9 +1346,7 @@ mod tests {
             .unwrap_err();
 
         match error {
-            Error::AuthenticationFailed(message) => {
-                assert_eq!(message, "TOTP session expired. Please restart login.");
-            }
+            Error::SecondFactorSessionExpired => {}
             other => panic!("unexpected error: {other:?}"),
         }
 
@@ -1493,13 +1358,11 @@ mod tests {
 
     #[tokio::test]
     async fn login_with_totp_treats_429_as_terminal_error() {
-        crypto::init().unwrap();
-
         let password = "hunter2";
         let key_gen =
             auth::generate_keys_with_strength(password, auth::KeyDerivationStrength::Interactive)
                 .unwrap();
-        let key_attributes = to_api_key_attributes(&key_gen.key_attributes);
+        let key_attributes = key_gen.key_attributes.clone();
 
         let mut server = Server::new_async().await;
         let mut ui = ScriptedUi::new();
@@ -1517,7 +1380,7 @@ mod tests {
                 serde_json::json!({
                     "attributes": {
                         "srpUserID": Uuid::new_v4(),
-                        "srpSalt": STANDARD.encode([1u8; 16]),
+                        "srpSalt": b64::encode(&[1u8; 16]),
                         "memLimit": key_attributes.mem_limit,
                         "opsLimit": key_attributes.ops_limit,
                         "kekSalt": key_attributes.kek_salt,
@@ -1567,12 +1430,7 @@ mod tests {
             .unwrap_err();
 
         match error {
-            Error::AuthenticationFailed(message) => {
-                assert_eq!(
-                    message,
-                    "Too many incorrect TOTP attempts. Please restart login."
-                );
-            }
+            Error::TotpRateLimited => {}
             other => panic!("unexpected error: {other:?}"),
         }
         assert!(ui.retryable_errors.is_empty());
@@ -1585,15 +1443,13 @@ mod tests {
 
     #[tokio::test]
     async fn setup_two_factor_encrypts_secret_with_recovery_key() {
-        crypto::init().unwrap();
-
         let password = "pw";
         let key_gen =
             auth::generate_keys_with_strength(password, auth::KeyDerivationStrength::Interactive)
                 .unwrap();
         let recovery_key = key_gen.private_key_attributes.recovery_key.into_string();
-        let master_key = crypto::decode_b64(&key_gen.private_key_attributes.key).unwrap();
-        let key_attributes = to_api_key_attributes(&key_gen.key_attributes);
+        let master_key = b64::decode(&key_gen.private_key_attributes.key).unwrap();
+        let key_attributes = key_gen.key_attributes.clone();
 
         let mut server = Server::new_async().await;
         let mut ui = ScriptedUi::new();
@@ -1645,13 +1501,11 @@ mod tests {
 
     #[tokio::test]
     async fn configure_passkey_recovery_accepts_hex_recovery_key() {
-        crypto::init().unwrap();
-
         let key_gen =
             auth::generate_keys_with_strength("pw", auth::KeyDerivationStrength::Interactive)
                 .unwrap();
         let recovery_key_hex = key_gen.private_key_attributes.recovery_key.into_string();
-        let expected_recovery_key = crypto::decode_hex(&recovery_key_hex).unwrap();
+        let expected_recovery_key = hex::decode(&recovery_key_hex).unwrap();
 
         let mut server = Server::new_async().await;
         let configure = server
@@ -1661,10 +1515,14 @@ mod tests {
             .with_status(200)
             .with_body_from_request(move |request| {
                 let payload: ConfigurePasskeyRecoveryPayload = parse_request_body(request);
-                let cipher = crypto::decode_b64(&payload.user_secret_cipher).unwrap();
-                let nonce = crypto::decode_b64(&payload.user_secret_nonce).unwrap();
-                let decrypted =
-                    secretbox::decrypt(&cipher, &nonce, &expected_recovery_key).unwrap();
+                let cipher = b64::decode(&payload.user_secret_cipher).unwrap();
+                let nonce = b64::decode(&payload.user_secret_nonce).unwrap();
+                let decrypted = secretbox::decrypt(
+                    &cipher,
+                    &crypto::Nonce::try_from_slice(&nonce).unwrap(),
+                    &crypto::Key::try_from_slice(&expected_recovery_key).unwrap(),
+                )
+                .unwrap();
                 assert_eq!(payload.secret, "reset-secret");
                 assert_eq!(String::from_utf8(decrypted).unwrap(), "reset-secret");
                 Vec::new()
@@ -1686,13 +1544,11 @@ mod tests {
 
     #[tokio::test]
     async fn login_with_passkey_treats_404_as_expired_session() {
-        crypto::init().unwrap();
-
         let password = "hunter2";
         let key_gen =
             auth::generate_keys_with_strength(password, auth::KeyDerivationStrength::Interactive)
                 .unwrap();
-        let key_attributes = to_api_key_attributes(&key_gen.key_attributes);
+        let key_attributes = key_gen.key_attributes.clone();
 
         let mut server = Server::new_async().await;
         let mut ui = ScriptedUi::new();
@@ -1709,7 +1565,7 @@ mod tests {
                 serde_json::json!({
                     "attributes": {
                         "srpUserID": Uuid::new_v4(),
-                        "srpSalt": STANDARD.encode([1u8; 16]),
+                        "srpSalt": b64::encode(&[1u8; 16]),
                         "memLimit": key_attributes.mem_limit,
                         "opsLimit": key_attributes.ops_limit,
                         "kekSalt": key_attributes.kek_salt,
@@ -1764,9 +1620,7 @@ mod tests {
             .unwrap_err();
 
         match error {
-            Error::AuthenticationFailed(message) => {
-                assert_eq!(message, "Passkey session expired. Please restart login.");
-            }
+            Error::SecondFactorSessionExpired => {}
             other => panic!("unexpected error: {other:?}"),
         }
         assert!(ui.passkey_presented);
@@ -1779,12 +1633,10 @@ mod tests {
 
     #[tokio::test]
     async fn create_account_uploads_keys_and_completes_srp_setup() {
-        crypto::init().unwrap();
-
         let email = "fresh-user@example.org";
         let encoded_email = urlencoding::encode(email).into_owned();
         let signup_token_bytes = b"signup-session-token";
-        let signup_token = URL_SAFE.encode(signup_token_bytes);
+        let signup_token = b64::encode_url_safe(signup_token_bytes);
         let signup_state = Arc::new(Mutex::new(MockSignupState::default()));
 
         let mut server = Server::new_async().await;
@@ -1842,8 +1694,8 @@ mod tests {
             .with_body_from_request(move |request| {
                 let payload: SetUserAttributesPayload = parse_request_body(request);
                 let key_attributes = payload.key_attributes;
-                let mem_limit = u64::try_from(key_attributes.mem_limit).unwrap();
-                let ops_limit = u64::try_from(key_attributes.ops_limit).unwrap();
+                let mem_limit = u64::from(key_attributes.mem_limit);
+                let ops_limit = u64::from(key_attributes.ops_limit);
 
                 assert_eq!(mem_limit * ops_limit, 4_294_967_296);
                 assert!(
@@ -1872,9 +1724,9 @@ mod tests {
             .with_body_from_request(move |request| {
                 let payload: SetupSrpPayload = parse_request_body(request);
                 let srp_user_id = Uuid::parse_str(&payload.srp_user_id).unwrap();
-                let srp_salt = STANDARD.decode(&payload.srp_salt).unwrap();
-                let srp_verifier = STANDARD.decode(&payload.srp_verifier).unwrap();
-                let srp_a = STANDARD.decode(&payload.srp_a).unwrap();
+                let srp_salt = b64::decode(&payload.srp_salt).unwrap();
+                let srp_verifier = b64::decode(&payload.srp_verifier).unwrap();
+                let srp_a = b64::decode(&payload.srp_a).unwrap();
                 let server = ServerG4096::<Sha256>::new();
                 let b_private = [0x33u8; 64];
                 let srp_b = pad_left(
@@ -1923,7 +1775,7 @@ mod tests {
 
                 serde_json::json!({
                     "setupID": setup_id,
-                    "srpB": STANDARD.encode(&srp_b),
+                    "srpB": b64::encode(&srp_b),
                 })
                 .to_string()
                 .into_bytes()
@@ -1940,7 +1792,7 @@ mod tests {
             .with_body_from_request(move |request| {
                 let payload: CompleteSrpSetupPayload = parse_request_body(request);
                 let setup_id = Uuid::parse_str(&payload.setup_id).unwrap();
-                let srp_m1 = STANDARD.decode(&payload.srp_m1).unwrap();
+                let srp_m1 = b64::decode(&payload.srp_m1).unwrap();
 
                 let mut state = state.lock().unwrap();
                 assert_eq!(state.pending_setup_id, Some(setup_id));
@@ -1948,7 +1800,7 @@ mod tests {
 
                 serde_json::json!({
                     "setupID": setup_id,
-                    "srpM2": STANDARD.encode(state.pending_server_proof.take().unwrap()),
+                    "srpM2": b64::encode(&state.pending_server_proof.take().unwrap()),
                 })
                 .to_string()
                 .into_bytes()
@@ -2003,15 +1855,13 @@ mod tests {
 
     #[tokio::test]
     async fn change_password_updates_srp_and_keys() {
-        crypto::init().unwrap();
-
         let original = auth::generate_keys_with_strength(
             "old-password",
             auth::KeyDerivationStrength::Interactive,
         )
         .unwrap();
-        let key_attributes = to_api_key_attributes(&original.key_attributes);
-        let master_key = crypto::decode_b64(&original.private_key_attributes.key).unwrap();
+        let key_attributes = original.key_attributes.clone();
+        let master_key = b64::decode(&original.private_key_attributes.key).unwrap();
         let state = Arc::new(Mutex::new(MockSignupState::default()));
 
         let mut server = Server::new_async().await;
@@ -2023,9 +1873,9 @@ mod tests {
             .with_status(200)
             .with_body_from_request(move |request| {
                 let payload: SetupSrpPayload = parse_request_body(request);
-                let srp_salt = STANDARD.decode(&payload.srp_salt).unwrap();
-                let srp_verifier = STANDARD.decode(&payload.srp_verifier).unwrap();
-                let srp_a = STANDARD.decode(&payload.srp_a).unwrap();
+                let srp_salt = b64::decode(&payload.srp_salt).unwrap();
+                let srp_verifier = b64::decode(&payload.srp_verifier).unwrap();
+                let srp_a = b64::decode(&payload.srp_a).unwrap();
                 let server = ServerG4096::<Sha256>::new();
                 let b_private = [0x44u8; 64];
                 let srp_b = pad_left(
@@ -2073,7 +1923,7 @@ mod tests {
 
                 serde_json::json!({
                     "setupID": setup_id,
-                    "srpB": STANDARD.encode(&srp_b),
+                    "srpB": b64::encode(&srp_b),
                 })
                 .to_string()
                 .into_bytes()
@@ -2094,7 +1944,7 @@ mod tests {
                     state.pending_setup_id.unwrap().to_string()
                 );
                 assert_eq!(
-                    STANDARD.decode(&payload.srp_m1).unwrap(),
+                    b64::decode(&payload.srp_m1).unwrap(),
                     state.pending_client_proof.as_ref().unwrap().clone()
                 );
                 assert!(payload.log_out_other_devices);
@@ -2107,7 +1957,7 @@ mod tests {
                     });
                 serde_json::json!({
                     "setupID": payload.setup_id,
-                    "srpM2": STANDARD.encode(state.pending_server_proof.as_ref().unwrap()),
+                    "srpM2": b64::encode(state.pending_server_proof.as_ref().unwrap()),
                 })
                 .to_string()
                 .into_bytes()
@@ -2140,13 +1990,16 @@ mod tests {
         let flow = AuthFlow::new(&client, &mut ui);
 
         let result = flow
-            .change_password(ChangePasswordParams {
-                email: "user@example.org".into(),
-                password: Zeroizing::new("new-password".into()),
-                master_key: SecretVec::new(master_key),
-                key_attributes,
-                log_out_other_devices: true,
-            })
+            .change_password_with_strength(
+                ChangePasswordParams {
+                    email: "user@example.org".into(),
+                    password: Zeroizing::new("new-password".into()),
+                    master_key: SecretVec::new(master_key),
+                    key_attributes,
+                    log_out_other_devices: true,
+                },
+                KeyDerivationStrength::Interactive,
+            )
             .await
             .unwrap();
 

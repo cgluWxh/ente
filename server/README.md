@@ -58,7 +58,7 @@ Until we get there, museum serves as an assistant for various housekeeping chore
 
 - Details about the 3 (yes 3!) clouds where the encrypted data and database are replicated to are [documented here](https://ente.com/reliability)
 
-Museum's architecture is generic enough to support arbitrary end-to-end encrypted storage. While we're currently focusing on building a great photo storage and sharing experience, that's not a limit. For example, we already use museum to also provide an [end-to-end encrypted open source 2FA app with cloud backups](../auth).
+Museum's architecture is generic enough to support arbitrary end-to-end encrypted storage. While we're currently focusing on building a great photo storage and sharing experience, that's not a limit. For example, we use museum to provide end-to-end encrypted [2FA](https://ente.com/auth), [document storage](https://ente.com/locker), and [social](https://ente.space).
 
 ## Self hosting
 
@@ -82,7 +82,7 @@ Everything that you might needed to run museum is all in here, since this is the
 
 Some people new to Docker/Go/Postgres might have general questions though. Unfortunately, because of limited engineering bandwidth **we will currently not be able to prioritize support queries related to self hosting**, and we request you to please not open issues around self hosting for the time being (feel free to create discussions though). The best way to summarize the status of self hosting is – **everything you need is here, but it is perhaps not readily documented, or flexible enough.**
 
-That said, we hope community members help each other out, e.g. in this repository's [Discussions](https://github.com/ente-io/ente/discussions), or on [our Discord](https://discord.gg/z2YVKkycX3). And whenever time permits, we will try to clarify, and also document such FAQs. Please feel free to open documentation PRs around this too.
+That said, we hope community members help each other out, e.g. in this repository's [Discussions](https://github.com/ente/ente/discussions), or on [our Discord](https://discord.gg/z2YVKkycX3). And whenever time permits, we will try to clarify, and also document such FAQs. Please feel free to open documentation PRs around this too.
 
 > [!TIP]
 >

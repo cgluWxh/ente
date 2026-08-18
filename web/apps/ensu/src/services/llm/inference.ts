@@ -58,8 +58,8 @@ export interface ContextParams {
 
 export interface InferenceBackend {
     readonly kind: BackendType;
-    initBackend(): Promise<void>;
-    loadModel(params: LoadModelParams): Promise<void>;
+    initBackend?(): Promise<void>;
+    loadModel(params: LoadModelParams): void | Promise<void>;
     createContext(
         model: { modelPath: string },
         params?: ContextParams,
@@ -113,11 +113,7 @@ class WasmInference implements InferenceBackend {
         this.wllama = new Wllama(wasmPaths, wllamaConfig);
     }
 
-    async initBackend() {
-        // No-op for WASM backend.
-    }
-
-    async loadModel(params: LoadModelParams) {
+    loadModel(params: LoadModelParams) {
         const modelUrl = ensureUrl(params.modelPath);
         this.loadedModelUrl = modelUrl;
     }
@@ -153,9 +149,7 @@ class WasmInference implements InferenceBackend {
         });
         return urls.every((url) => {
             const existing = models.find((model) => model.url === url);
-            return (
-                existing && existing.validate() === ModelValidationStatus.VALID
-            );
+            return existing?.validate() === ModelValidationStatus.VALID;
         });
     }
 
@@ -170,10 +164,6 @@ class WasmInference implements InferenceBackend {
             request.templateOverride ?? undefined,
         );
         return this.generateCompletion(prompt, request, onEvent);
-    }
-
-    async prewarmMultimodalContext() {
-        // Multimodal inference is only available through the native Tauri backend.
     }
 
     cancel(jobId: number) {
@@ -245,7 +235,7 @@ class WasmInference implements InferenceBackend {
     private async ensureModelCached(modelUrl: string) {
         if (
             typeof navigator === "undefined" ||
-            !navigator.storage ||
+            !("storage" in navigator) ||
             !("getDirectory" in navigator.storage)
         ) {
             return;
@@ -282,10 +272,7 @@ class WasmInference implements InferenceBackend {
                 includeInvalid: true,
             });
             const existing = models.find((model) => model.url === url);
-            if (
-                existing &&
-                existing.validate() === ModelValidationStatus.VALID
-            ) {
+            if (existing?.validate() === ModelValidationStatus.VALID) {
                 totals[index] = existing.size;
                 loaded[index] = existing.size;
                 emitProgress("Ready");
@@ -298,7 +285,7 @@ class WasmInference implements InferenceBackend {
                 create: true,
             });
             const file = await handle.getFile();
-            let downloaded = file.size ?? 0;
+            let downloaded = file.size;
 
             const metadata =
                 await this.modelManager.cacheManager.getMetadata(url);
@@ -312,7 +299,7 @@ class WasmInference implements InferenceBackend {
             const headers: HeadersInit | undefined = downloaded
                 ? { Range: `bytes=${downloaded}-` }
                 : undefined;
-            let res = await fetch(url, { headers });
+            const res = await fetch(url, { headers });
             if (!res.ok || !res.body) {
                 throw new Error(`Failed to download model (${res.status})`);
             }
@@ -350,7 +337,6 @@ class WasmInference implements InferenceBackend {
             while (true) {
                 const { done, value } = await reader.read();
                 if (done) break;
-                if (!value) continue;
                 await writable.write(value);
                 downloaded += value.length;
                 loaded[index] = downloaded;
@@ -403,10 +389,10 @@ class WasmInference implements InferenceBackend {
         const start = Date.now();
         const controller = new AbortController();
         this.abortControllers.set(jobId, controller);
+        onEvent?.({ type: "text", job_id: jobId, text: "" });
 
         let generatedTokens = 0;
-        let errorMessage: string | null = null;
-        let promptTokens: number | null = null;
+        let promptTokens: number | null;
 
         try {
             try {
@@ -437,7 +423,7 @@ class WasmInference implements InferenceBackend {
 
             let lastText = "";
             for await (const chunk of stream) {
-                const currentText = chunk.currentText ?? "";
+                const currentText = chunk.currentText;
                 const delta = currentText.slice(lastText.length);
                 lastText = currentText;
                 generatedTokens += 1;
@@ -452,18 +438,12 @@ class WasmInference implements InferenceBackend {
                 }
             }
         } catch (error) {
-            if (!(error instanceof WllamaAbortError)) {
-                errorMessage =
-                    error instanceof Error ? error.message : String(error);
-            } else {
-                errorMessage = "Generation aborted";
+            if (error instanceof WllamaAbortError) {
+                throw new Error("Generation cancelled", { cause: error });
             }
+            throw error instanceof Error ? error : new Error(String(error));
         } finally {
             this.abortControllers.delete(jobId);
-        }
-
-        if (errorMessage && onEvent) {
-            onEvent({ type: "error", job_id: jobId, message: errorMessage });
         }
 
         const summary = {
@@ -481,7 +461,7 @@ class WasmInference implements InferenceBackend {
     }
 
     private async resolveStopTokens(stopSequences: string[]) {
-        if (!stopSequences || stopSequences.length === 0) {
+        if (stopSequences.length === 0) {
             return { stopTokens: [] as number[] };
         }
 
@@ -494,7 +474,7 @@ class WasmInference implements InferenceBackend {
                     stopTokens.push(first);
                 }
             } catch {
-                // Ignore invalid stop sequences.
+                // Skip stop sequences that fail to tokenize.
             }
         }
 
@@ -509,7 +489,7 @@ class WasmInference implements InferenceBackend {
 
 const parseContentRangeTotal = (header: string | null) => {
     if (!header) return undefined;
-    const match = header.match(/\/(\d+)/);
+    const match = /\/(\d+)/.exec(header);
     if (!match) return undefined;
     const total = Number(match[1]);
     return Number.isFinite(total) ? total : undefined;
@@ -537,24 +517,30 @@ class TauriInference implements InferenceBackend {
     }
 
     async isModelAvailable(modelPath: string): Promise<boolean> {
-        const { exists } = await import("@tauri-apps/plugin-fs");
-        if (!(await exists(modelPath))) return false;
+        const { exists, open, stat } = await import("@tauri-apps/plugin-fs");
         try {
-            const size = await invoke<number | null>("fs_file_size", {
-                path: modelPath,
-            });
-            if (size !== null && size < MIN_GGUF_BYTES) {
+            if (!(await exists(modelPath))) return false;
+            const { size } = await stat(modelPath);
+            if (size < MIN_GGUF_BYTES) {
                 return false;
             }
-            const head = await invoke<number[]>("fs_read_head", {
-                path: modelPath,
-                length: 4,
-            });
-            if (!isGgufHeader(new Uint8Array(head))) {
-                return false;
+            const file = await open(modelPath, { read: true });
+            try {
+                const head = new Uint8Array(4);
+                let offset = 0;
+                while (offset < head.length) {
+                    const bytesRead = await file.read(head.subarray(offset));
+                    if (bytesRead === null) break;
+                    offset += bytesRead;
+                }
+                if (!isGgufHeader(head.subarray(0, offset))) {
+                    return false;
+                }
+            } finally {
+                await file.close().catch(() => undefined);
             }
         } catch {
-            // ignore validation failures
+            return false;
         }
         return true;
     }
@@ -629,19 +615,12 @@ class TauriInference implements InferenceBackend {
         request: GenerateChatRequest,
         onEvent?: (event: GenerateEvent) => void,
     ): Promise<GenerateSummary> {
-        const panicJobId = 0;
         let resolvedJobId: number | null = null;
-        let errorMessage: string | null = null;
 
-        let resolveSummary!: (summary: GenerateSummary) => void;
-        let rejectSummary!: (error: Error) => void;
-
-        const summaryPromise = new Promise<GenerateSummary>(
-            (resolve, reject) => {
-                resolveSummary = resolve;
-                rejectSummary = reject;
-            },
-        );
+        let resolveDone!: () => void;
+        const done = new Promise<void>((resolve) => {
+            resolveDone = resolve;
+        });
 
         const unlisten = await listen<GenerateEvent>("llm-event", (event) => {
             const payload = event.payload;
@@ -658,24 +637,7 @@ class TauriInference implements InferenceBackend {
                 onEvent(payload);
             }
 
-            if (payload.type === "error") {
-                if (payload.job_id === panicJobId) {
-                    rejectSummary(new Error(payload.message));
-                    void unlisten();
-                    return;
-                }
-                errorMessage = payload.message;
-            }
-
-            if (payload.type === "done") {
-                if (errorMessage) {
-                    // still resolve summary; error is emitted separately
-                    resolveSummary(payload.summary);
-                } else {
-                    resolveSummary(payload.summary);
-                }
-                void unlisten();
-            }
+            if (payload.type === "done") resolveDone();
         });
 
         try {
@@ -683,20 +645,19 @@ class TauriInference implements InferenceBackend {
                 messageCount: request.messages.length,
                 maxTokens: request.maxTokens ?? null,
             });
-            await invoke("llm_generate_chat_stream", {
-                request: buildGenerateChatRequest(request),
-            });
-        } catch (error) {
-            void unlisten();
-            const err = normalizeInvokeError(
-                error,
-                "Failed to start generation",
+            const summary = await invoke<GenerateSummary>(
+                "llm_generate_chat_stream",
+                { request: buildGenerateChatRequest(request) },
             );
+            await done;
+            return summary;
+        } catch (error) {
+            const err = normalizeInvokeError(error, "Generation failed");
             log.error("LLM tauri generate failed", err);
-            rejectSummary(err);
+            throw err;
+        } finally {
+            unlisten();
         }
-
-        return summaryPromise;
     }
 
     cancel(jobId: number) {
@@ -780,31 +741,25 @@ const buildGenerateChatRequest = (request: GenerateChatRequest) => ({
 const buildSamplingConfig = (request: GenerateChatRequest) => {
     const sampling: Record<string, unknown> = {};
 
-    if (request.temperature !== undefined && request.temperature !== null) {
+    if (request.temperature !== undefined) {
         sampling.temp = request.temperature;
     }
-    if (request.topP !== undefined && request.topP !== null) {
+    if (request.topP !== undefined) {
         sampling.top_p = request.topP;
     }
-    if (request.topK !== undefined && request.topK !== null) {
+    if (request.topK !== undefined) {
         sampling.top_k = request.topK;
     }
-    if (request.repeatPenalty !== undefined && request.repeatPenalty !== null) {
+    if (request.repeatPenalty !== undefined) {
         sampling.penalty_repeat = request.repeatPenalty;
     }
-    if (
-        request.frequencyPenalty !== undefined &&
-        request.frequencyPenalty !== null
-    ) {
+    if (request.frequencyPenalty !== undefined) {
         sampling.penalty_freq = request.frequencyPenalty;
     }
-    if (
-        request.presencePenalty !== undefined &&
-        request.presencePenalty !== null
-    ) {
+    if (request.presencePenalty !== undefined) {
         sampling.penalty_present = request.presencePenalty;
     }
-    if (request.grammar !== undefined && request.grammar !== null) {
+    if (request.grammar !== undefined) {
         sampling.grammar = request.grammar;
     }
 

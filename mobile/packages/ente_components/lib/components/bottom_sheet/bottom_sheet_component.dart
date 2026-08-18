@@ -9,10 +9,7 @@ import 'package:ente_components/theme/theme.dart';
 import 'package:flutter/material.dart';
 import 'package:hugeicons/hugeicons.dart';
 
-/// Figma: https://www.figma.com/design/BuBNPPytxlVnqfmCUW0mgz/Ente-Visual-Design?node-id=4809-7992&m=dev
-/// Section: Bottom sheet / Bottom Sheet Header
-/// Specs: H2 title, optional 36px circular close action, and optional centered
-/// illustration slot for warning and error sheets.
+// Figma: https://www.figma.com/design/BuBNPPytxlVnqfmCUW0mgz/Ente-Visual-Design?node-id=4809-7992&m=dev
 class _BottomSheetHeaderComponent extends StatelessWidget {
   const _BottomSheetHeaderComponent({
     this.title,
@@ -28,9 +25,6 @@ class _BottomSheetHeaderComponent extends StatelessWidget {
   final String? title;
   final Widget? illustration;
 
-  /// Called when the close button is pressed, before the sheet is dismissed.
-  ///
-  /// Barrier taps, drag dismissals, and system back dismissals do not call this.
   final FutureOr<void> Function()? onClose;
   final Object? closeResult;
   final bool showCloseButton;
@@ -66,6 +60,7 @@ class _BottomSheetHeaderComponent extends StatelessWidget {
     }
 
     final colors = context.componentColors;
+
     return SizedBox(
       height: _headerHeight,
       child: Row(
@@ -93,10 +88,7 @@ class _BottomSheetHeaderComponent extends StatelessWidget {
   }
 }
 
-/// Figma: https://www.figma.com/design/BuBNPPytxlVnqfmCUW0mgz/Ente-Visual-Design?node-id=4809-8027&m=dev
-/// Section: Bottom sheet / Bottom sheet template
-/// Specs: 20px top radius, 20px padding, 16px content gap, stacked 12px
-/// action gap.
+// Figma: https://www.figma.com/design/BuBNPPytxlVnqfmCUW0mgz/Ente-Visual-Design?node-id=4809-8027&m=dev
 class BottomSheetComponent extends StatelessWidget {
   const BottomSheetComponent({
     super.key,
@@ -116,7 +108,12 @@ class BottomSheetComponent extends StatelessWidget {
     this.contentSpacing = Spacing.lg,
     this.actionsTopSpacing,
     this.backgroundColor,
+    this.borderSide,
     this.isKeyboardAware = false,
+    this.isScrollable = false,
+    this.initialChildSize = 0.5,
+    this.snap = false,
+    this.snapSizes,
   });
 
   final String? title;
@@ -126,9 +123,7 @@ class BottomSheetComponent extends StatelessWidget {
   final Widget? content;
   final List<Widget> actions;
 
-  /// Called when the close button is pressed, before the sheet is dismissed.
-  ///
-  /// Barrier taps, drag dismissals, and system back dismissals do not call this.
+  // Called only by the close button, not other dismissal paths.
   final FutureOr<void> Function()? onClose;
   final Object? closeResult;
   final bool showCloseButton;
@@ -139,16 +134,30 @@ class BottomSheetComponent extends StatelessWidget {
   final double contentSpacing;
   final double? actionsTopSpacing;
   final Color? backgroundColor;
+
+  // Source: https://www.figma.com/design/BuBNPPytxlVnqfmCUW0mgz/Ente-Visual-Design?node-id=4809-8027&m=dev
+  final BorderSide? borderSide;
+
   final bool isKeyboardAware;
+  final bool isScrollable;
+
+  final double initialChildSize;
+
+  final bool snap;
+
+  final List<double>? snapSizes;
 
   @override
   Widget build(BuildContext context) {
     final colors = context.componentColors;
+    final isDesktop = _isDesktopPlatform(Theme.of(context).platform);
     final bottomInset = isKeyboardAware
         ? MediaQuery.viewInsetsOf(context).bottom
         : 0.0;
+
     final usesCenteredLayout =
         illustration != null || (message != null && content == null);
+
     final effectiveHeader =
         header ??
         ((title != null || showCloseButton || usesCenteredLayout)
@@ -163,6 +172,7 @@ class BottomSheetComponent extends StatelessWidget {
                 isCentered: usesCenteredLayout,
               )
             : null);
+
     final effectiveContent =
         content ??
         (message == null
@@ -172,14 +182,75 @@ class BottomSheetComponent extends StatelessWidget {
                 textAlign: usesCenteredLayout ? TextAlign.center : textAlign,
                 style: TextStyles.body.copyWith(color: colors.textLight),
               ));
+
     final effectiveCrossAxisAlignment = usesCenteredLayout
         ? CrossAxisAlignment.stretch
         : crossAxisAlignment;
+
     final effectiveContentSpacing = usesCenteredLayout
         ? Spacing.lg
         : contentSpacing;
+
     final effectiveActionsTopSpacing =
         actionsTopSpacing ?? (usesCenteredLayout ? Spacing.xxl : Spacing.lg);
+
+    final children = <Widget>[
+      ?effectiveHeader,
+      if (effectiveContent != null) ...[
+        if (effectiveHeader != null) SizedBox(height: effectiveContentSpacing),
+        effectiveContent,
+      ],
+      if (actions.isNotEmpty) ...[
+        SizedBox(height: effectiveActionsTopSpacing),
+        _BottomSheetActions(actions: actions),
+      ],
+    ];
+
+    final contentColumn = Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: effectiveCrossAxisAlignment,
+      children: children,
+    );
+
+    late final Widget sheetBody;
+    if (isDesktop && isScrollable) {
+      sheetBody = SingleChildScrollView(padding: padding, child: contentColumn);
+    } else if (isScrollable) {
+      sheetBody = DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: initialChildSize,
+        snap: snap,
+        snapSizes: snapSizes,
+        builder: (context, scrollController) {
+          return ListView(
+            controller: scrollController,
+            padding: padding,
+            shrinkWrap: true,
+            children: children,
+          );
+        },
+      );
+    } else {
+      sheetBody = Padding(padding: padding, child: contentColumn);
+    }
+
+    final borderRadius = isDesktop
+        ? BorderRadius.circular(Radii.sheet)
+        : const BorderRadius.only(
+            topLeft: Radius.circular(Radii.bottomSheet),
+            topRight: Radius.circular(Radii.bottomSheet),
+          );
+    final safeAreaBody = SafeArea(top: false, child: sheetBody);
+    final outlinedBody = borderSide == null
+        ? safeAreaBody
+        : DecoratedBox(
+            position: DecorationPosition.foreground,
+            decoration: BoxDecoration(
+              border: Border.fromBorderSide(borderSide!),
+              borderRadius: borderRadius,
+            ),
+            child: safeAreaBody,
+          );
 
     return AnimatedPadding(
       duration: const Duration(milliseconds: 200),
@@ -189,40 +260,14 @@ class BottomSheetComponent extends StatelessWidget {
         clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
           color: backgroundColor ?? colors.backgroundBase,
-          borderRadius: const BorderRadius.only(
-            topLeft: Radius.circular(Radii.bottomSheet),
-            topRight: Radius.circular(Radii.bottomSheet),
-          ),
+          borderRadius: borderRadius,
         ),
-        child: SafeArea(
-          top: false,
-          child: Padding(
-            padding: padding,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: effectiveCrossAxisAlignment,
-              children: [
-                if (effectiveHeader != null) effectiveHeader,
-                if (effectiveContent != null) ...[
-                  if (effectiveHeader != null)
-                    SizedBox(height: effectiveContentSpacing),
-                  effectiveContent,
-                ],
-                if (actions.isNotEmpty) ...[
-                  SizedBox(height: effectiveActionsTopSpacing),
-                  _BottomSheetActions(actions: actions),
-                ],
-              ],
-            ),
-          ),
-        ),
+        child: outlinedBody,
       ),
     );
   }
 }
 
-/// Shows [BottomSheetComponent] with the modal behavior used by the component
-/// catalog and mobile apps.
 Future<T?> showBottomSheetComponent<T>({
   required BuildContext context,
   required WidgetBuilder builder,
@@ -232,6 +277,66 @@ Future<T?> showBottomSheetComponent<T>({
   Color? barrierColor,
 }) {
   final colors = context.componentColors;
+  final effectiveBarrierColor =
+      barrierColor ?? colors.specialScrim.withValues(alpha: 0.55);
+
+  if (_isDesktopPlatform(Theme.of(context).platform)) {
+    return _showDesktopDialog<T>(
+      context: context,
+      builder: builder,
+      isDismissible: isDismissible,
+      useRootNavigator: useRootNavigator,
+      barrierColor: effectiveBarrierColor,
+    );
+  }
+
+  return _showMobileBottomSheet<T>(
+    context: context,
+    builder: builder,
+    isDismissible: isDismissible,
+    enableDrag: enableDrag,
+    useRootNavigator: useRootNavigator,
+    barrierColor: effectiveBarrierColor,
+  );
+}
+
+Future<T?> _showDesktopDialog<T>({
+  required BuildContext context,
+  required WidgetBuilder builder,
+  required bool isDismissible,
+  required bool useRootNavigator,
+  required Color barrierColor,
+}) {
+  return showDialog<T>(
+    context: context,
+    useRootNavigator: useRootNavigator,
+    barrierDismissible: isDismissible,
+    barrierColor: barrierColor,
+    builder: (dialogContext) {
+      return Dialog(
+        elevation: 0,
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.all(Spacing.xl),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: _desktopDialogMaxWidth,
+            maxHeight: MediaQuery.sizeOf(dialogContext).height * 0.8,
+          ),
+          child: PopScope(canPop: isDismissible, child: builder(dialogContext)),
+        ),
+      );
+    },
+  );
+}
+
+Future<T?> _showMobileBottomSheet<T>({
+  required BuildContext context,
+  required WidgetBuilder builder,
+  required bool isDismissible,
+  required bool enableDrag,
+  required bool useRootNavigator,
+  required Color barrierColor,
+}) {
   return showModalBottomSheet<T>(
     context: context,
     useRootNavigator: useRootNavigator,
@@ -239,7 +344,8 @@ Future<T?> showBottomSheetComponent<T>({
     isDismissible: isDismissible,
     enableDrag: enableDrag,
     backgroundColor: Colors.transparent,
-    barrierColor: barrierColor ?? colors.specialScrim.withValues(alpha: 0.55),
+    barrierColor: barrierColor,
+    useSafeArea: true,
     builder: (context) {
       return PopScope(canPop: isDismissible, child: builder(context));
     },
@@ -284,7 +390,7 @@ class _CenteredHeader extends StatelessWidget {
         if (showCloseButton && (illustration != null || title != null))
           const SizedBox(height: Spacing.xs),
         if (illustration != null)
-          _BottomSheetIllustrationSlot(child: illustration!),
+          _BottomSheetIllustration(child: illustration!),
         if (title != null) ...[
           SizedBox(height: illustration == null ? 0 : Spacing.lg),
           Text(
@@ -300,24 +406,20 @@ class _CenteredHeader extends StatelessWidget {
   }
 }
 
-class _BottomSheetIllustrationSlot extends StatelessWidget {
-  const _BottomSheetIllustrationSlot({required this.child});
+class _BottomSheetIllustration extends StatelessWidget {
+  const _BottomSheetIllustration({required this.child});
 
   final Widget child;
 
   @override
   Widget build(BuildContext context) {
     return Center(
-      child: SizedBox(
-        width: _illustrationSlotWidth,
-        height: _illustrationSlotHeight,
-        child: Padding(
-          padding: const EdgeInsets.only(bottom: _illustrationSlotBottomInset),
-          child: FittedBox(
-            alignment: Alignment.bottomCenter,
-            fit: BoxFit.scaleDown,
-            child: child,
-          ),
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: _illustrationSlotBottomInset),
+        child: FittedBox(
+          alignment: Alignment.bottomCenter,
+          fit: BoxFit.scaleDown,
+          child: child,
         ),
       ),
     );
@@ -331,7 +433,6 @@ class _BottomSheetCloseButton extends StatelessWidget {
     required this.tooltip,
   });
 
-  /// Called when the close button is pressed, before the sheet is dismissed.
   final FutureOr<void> Function()? onClose;
   final Object? closeResult;
   final String tooltip;
@@ -384,6 +485,12 @@ class _BottomSheetActions extends StatelessWidget {
 }
 
 const double _headerHeight = 38;
-const double _illustrationSlotWidth = 180;
-const double _illustrationSlotHeight = 120;
 const double _illustrationSlotBottomInset = 11;
+const double _desktopDialogMaxWidth = 440;
+
+bool _isDesktopPlatform(TargetPlatform platform) => switch (platform) {
+  TargetPlatform.linux ||
+  TargetPlatform.macOS ||
+  TargetPlatform.windows => true,
+  _ => false,
+};

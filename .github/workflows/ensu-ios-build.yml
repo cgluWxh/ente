@@ -3,8 +3,8 @@ name: "Build (Ensu iOS)"
 on:
     pull_request:
         paths:
-            - "mobile/native/darwin/Apps/Ensu/**"
-            - "mobile/native/darwin/Packages/**"
+            - "apple/apps/ensu/**"
+            - "apple/packages/EnteOnnxRuntime/**"
             - "rust/apps/codegen/**"
             - "rust/crates/core/**"
             - "rust/crates/ensu/**"
@@ -23,17 +23,24 @@ concurrency:
 
 jobs:
     build-and-test:
-        runs-on: macos-latest
+        runs-on: macos-26
 
         steps:
-            - name: Checkout code
-              uses: actions/checkout@v6
+            - name: Checkout
+              uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+            # Restore-only; primed on main by warm-caches.yml.
+            - name: Restore Rust cache
+              uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+              with:
+                  workspaces: rust
+                  shared-key: ensu-ios
+                  save-if: false
 
             - run: cargo codegen native
               working-directory: rust
 
-            # This pull_request workflow does not provide the inference fixtures,
-            # so this step is only a build + startup smoke test.
+            # PRs lack inference fixtures, so this only tests build and startup.
             - name: Build and test Ensu
-              working-directory: mobile/native/darwin/Apps/Ensu
+              working-directory: apple/apps/ensu
               run: xcodebuild test -scheme Ensu -destination 'platform=iOS Simulator,name=iPhone 17'

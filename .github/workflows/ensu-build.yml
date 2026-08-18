@@ -8,12 +8,11 @@ on:
             - "release/ensu-v*"
     workflow_dispatch:
     schedule:
-        # Run every weekday at ~5:45 AM IST
+        # Weekdays at ~5:45 AM IST
         - cron: "15 0 * * 1-5"
 
 env:
     NDK_VERSION: "27.3.13750724"
-    BUILD_NUMBER_BASE: "33"
 
 permissions:
     contents: write
@@ -34,12 +33,13 @@ jobs:
             release_title: ${{ steps.prepare.outputs.release_title }}
             release_body: ${{ steps.prepare.outputs.release_body }}
             release_body_grouped: ${{ steps.prepare.outputs.release_body_grouped }}
+            has_new_changes: ${{ steps.prepare.outputs.has_new_changes }}
             play_store_release_notes: ${{ steps.prepare.outputs.play_store_release_notes }}
             android_apk_name: ${{ steps.prepare.outputs.android_apk_name }}
 
         steps:
             - name: Checkout
-              uses: actions/checkout@v6
+              uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
               with:
                   ref: ${{ github.ref_name }}
 
@@ -57,7 +57,6 @@ jobs:
 
                   version="$(node .github/scripts/ensu-version.mjs get)"
                   release_version="${version%-beta}"
-                  build_number=$((BUILD_NUMBER_BASE + GITHUB_RUN_NUMBER))
 
                   if [[ "${GITHUB_REF_NAME}" == release/ensu-v* ]]; then
                       if [[ "${version}" != "${release_version}" ]]; then
@@ -68,6 +67,7 @@ jobs:
                           echo "::error::Branch ${GITHUB_REF_NAME} does not match Ensu version ${release_version}"
                           exit 1
                       fi
+                      build_number="$(node .github/scripts/ensu-version.mjs get-build-base)"
                       release_tag="ensu-v${release_version}-rc"
                       release_title="🤖 Ensu release candidate · ${release_version} (build ${build_number})"
                   else
@@ -75,6 +75,8 @@ jobs:
                           echo "::error::${GITHUB_REF_NAME} is ${version}, expected ${release_version}-beta"
                           exit 1
                       fi
+                      build_number_base="$(node .github/scripts/ensu-version.mjs get-build-base)"
+                      build_number=$((build_number_base + GITHUB_RUN_NUMBER))
                       release_tag="ensu-v${release_version}-beta"
                       release_title="🤖 Ensu nightly · ${version} (build ${build_number})"
                   fi
@@ -99,17 +101,13 @@ jobs:
             fail-fast: false
             matrix:
                 platform:
-                    # Tauri docs recommend building Linux release bundles on the
-                    # oldest supported runtime OS with WebKitGTK 4.1, so that
-                    # AppImage/deb/rpm artifacts keep a low glibc baseline.
+                    # Ubuntu 22.04 keeps Linux bundles on a low glibc baseline.
                     - os: ubuntu-22.04
                       rust-target: x86_64-unknown-linux-gnu
                       bundle-targets: appimage,deb,rpm
+                    # One universal build lets both architectures share an updater artifact.
                     - os: macos-latest
-                      rust-target: x86_64-apple-darwin
-                      bundle-targets: app,dmg
-                    - os: macos-latest
-                      rust-target: aarch64-apple-darwin
+                      rust-target: universal-apple-darwin
                       bundle-targets: app,dmg
                     - os: windows-latest
                       rust-target: x86_64-pc-windows-msvc
@@ -123,12 +121,12 @@ jobs:
 
         steps:
             - name: Checkout
-              uses: actions/checkout@v6
+              uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
               with:
                   ref: ${{ needs.build-metadata.outputs.commit_sha }}
 
             - name: Setup Node.js
-              uses: actions/setup-node@v6
+              uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
               with:
                   node-version: 24
                   cache: "npm"
@@ -139,10 +137,15 @@ jobs:
               run: |
                   sudo apt-get update
                   sudo apt-get install -y libwebkit2gtk-4.1-dev libsoup-3.0-dev libssl-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+                  # Ubuntu 22.04 needs LunarG's repository to provide glslc for llama.cpp.
+                  sudo wget -qO /usr/share/keyrings/lunarg.asc https://packages.lunarg.com/lunarg-signing-key-pub.asc
+                  echo "deb [signed-by=/usr/share/keyrings/lunarg.asc] https://packages.lunarg.com/vulkan jammy main" | sudo tee /etc/apt/sources.list.d/lunarg-vulkan-jammy.list >/dev/null
+                  sudo apt-get update
+                  sudo apt-get install -y vulkan-sdk
 
-            - name: Install macOS Intel Rust target
-              if: matrix.platform.rust-target == 'x86_64-apple-darwin'
-              run: rustup target add x86_64-apple-darwin
+            - name: Install macOS Rust targets
+              if: matrix.platform.rust-target == 'universal-apple-darwin'
+              run: rustup target add x86_64-apple-darwin aarch64-apple-darwin
 
             - name: Install web dependencies
               working-directory: web
@@ -177,28 +180,49 @@ jobs:
 
             - name: Write Tauri config override (updater + Windows signing)
               if: matrix.platform.os == 'windows-latest'
+              env:
+                  AZURE_ENDPOINT: ${{ secrets.AZURE_ENDPOINT }}
+                  AZURE_CODE_SIGNING_NAME: ${{ secrets.AZURE_CODE_SIGNING_NAME }}
+                  AZURE_CERT_PROFILE_NAME: ${{ secrets.AZURE_CERT_PROFILE_NAME }}
               shell: bash
               run: |
+                  test "${{ secrets.AZURE_ENDPOINT != '' && secrets.AZURE_CODE_SIGNING_NAME != '' && secrets.AZURE_CERT_PROFILE_NAME != '' }}" = true
                   cargo install --locked artifact-signing-cli --version 0.11.0
-                  echo "$(cygpath -w "$HOME/.cargo/bin")" >> $GITHUB_PATH
+
+                  artifact_signing_cli="${CARGO_HOME:-$HOME/.cargo}/bin/artifact-signing-cli.exe"
+                  test -f "$artifact_signing_cli" || { echo "::error::artifact-signing-cli not found at $artifact_signing_cli"; exit 1; }
+                  artifact_signing_cli="$(cygpath -w "$artifact_signing_cli")"
+
                   SIGNTOOL_PATH=$(powershell -NoProfile -Command "Get-ChildItem 'C:\\Program Files (x86)\\Windows Kits\\10\\bin\\*\\x64\\signtool.exe' -ErrorAction Stop | Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName" | tr -d '\r')
                   echo "SIGNTOOL_PATH=$SIGNTOOL_PATH" >> $GITHUB_ENV
 
-                  cat > rust/apps/ensu/tauri.ci.conf.json <<'EOF'
-                  {
-                      "plugins": {
-                          "updater": {
-                              "pubkey": ${{ toJSON(vars.ENSU_TAURI_UPDATER_PUBKEY) }}
+                  jq -n \
+                      --arg signer "$artifact_signing_cli" \
+                      '{
+                          plugins: {
+                              updater: { pubkey: ${{ toJSON(vars.ENSU_TAURI_UPDATER_PUBKEY) }} }
+                          },
+                          bundle: {
+                              createUpdaterArtifacts: "v1Compatible",
+                              windows: {
+                                  signCommand: {
+                                      cmd: $signer,
+                                      args: [
+                                          "-e",
+                                          env.AZURE_ENDPOINT,
+                                          "-a",
+                                          env.AZURE_CODE_SIGNING_NAME,
+                                          "-c",
+                                          env.AZURE_CERT_PROFILE_NAME,
+                                          "-d",
+                                          "Ensu",
+                                          "%1"
+                                      ]
+                                  }
+                              }
                           }
-                      },
-                      "bundle": {
-                          "createUpdaterArtifacts": "v1Compatible",
-                          "windows": {
-                              "signCommand": ${{ toJSON(format('artifact-signing-cli -e {0} -a {1} -c {2} -d Ensu %1', secrets.AZURE_ENDPOINT, secrets.AZURE_CODE_SIGNING_NAME, secrets.AZURE_CERT_PROFILE_NAME)) }}
-                          }
-                      }
-                  }
-                  EOF
+                      }' \
+                      > rust/apps/ensu/tauri.ci.conf.json
 
             - name: Mint nightly token
               id: nightly_token
@@ -282,16 +306,16 @@ jobs:
 
         defaults:
             run:
-                working-directory: mobile/native/android/apps/ensu
+                working-directory: android/apps/ensu
 
         steps:
             - name: Checkout
-              uses: actions/checkout@v6
+              uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
               with:
                   ref: ${{ needs.build-metadata.outputs.commit_sha }}
 
             - name: Setup JDK 17
-              uses: actions/setup-java@v5
+              uses: actions/setup-java@ad2b38190b15e4d6bdf0c97fb4fca8412226d287 # v5.3.0
               with:
                   distribution: "temurin"
                   java-version: "17"
@@ -303,6 +327,12 @@ jobs:
               run: |
                   echo "y" | sdkmanager --install "ndk;${{ env.NDK_VERSION }}"
                   echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/${{ env.NDK_VERSION }}" >> $GITHUB_ENV
+
+            # cargo codegen native enables llama.cpp's Vulkan backend on Linux.
+            - name: Install Vulkan build dependencies
+              run: |
+                  sudo apt-get update
+                  sudo apt-get install -y libvulkan-dev glslc
 
             - run: cargo codegen native
               working-directory: rust
@@ -324,7 +354,7 @@ jobs:
                   EOF
 
             - name: Build signed Android artifacts
-              run: ./gradlew -PversionCode="${BUILD_NUMBER}" :app-ui:assembleRelease :app-ui:bundleRelease
+              run: ./gradlew -PversionCode="${BUILD_NUMBER}" :app:assembleRelease :app:bundleRelease
 
             - name: Prepare whatsnew
               run: |
@@ -334,7 +364,7 @@ jobs:
             - name: Prepare Android APK for GitHub release
               run: |
                   mkdir -p artifacts
-                  cp app-ui/build/outputs/apk/release/app-ui-release.apk "artifacts/${ANDROID_APK_NAME}"
+                  cp app/build/outputs/apk/release/app-release.apk "artifacts/${ANDROID_APK_NAME}"
 
             - name: Mint nightly token
               id: nightly_token
@@ -353,7 +383,7 @@ jobs:
                   tag: ${{ env.RELEASE_TAG }}
                   name: ${{ env.RELEASE_TAG }}
                   body: ${{ env.RELEASE_BODY }}
-                  artifacts: mobile/native/android/apps/ensu/artifacts/${{ env.ANDROID_APK_NAME }}
+                  artifacts: android/apps/ensu/artifacts/${{ env.ANDROID_APK_NAME }}
                   prerelease: true
                   makeLatest: false
                   allowUpdates: true
@@ -367,7 +397,7 @@ jobs:
                   name: ${{ env.RELEASE_TAG }}
                   body: ${{ env.RELEASE_BODY }}
                   commit: ${{ env.COMMIT_SHA }}
-                  artifacts: mobile/native/android/apps/ensu/artifacts/${{ env.ANDROID_APK_NAME }}
+                  artifacts: android/apps/ensu/artifacts/${{ env.ANDROID_APK_NAME }}
                   draft: true
                   allowUpdates: true
                   updateOnlyUnreleased: true
@@ -377,9 +407,9 @@ jobs:
               with:
                   serviceAccountJsonPlainText: ${{ secrets.SERVICE_ACCOUNT_JSON }}
                   packageName: io.ente.ensu
-                  releaseFiles: mobile/native/android/apps/ensu/app-ui/build/outputs/bundle/release/app-ui-release.aab
+                  releaseFiles: android/apps/ensu/app/build/outputs/bundle/release/app-release.aab
                   tracks: internal
-                  whatsNewDirectory: mobile/native/android/apps/ensu/whatsnew
+                  whatsNewDirectory: android/apps/ensu/whatsnew
 
     build-ios:
         needs: build-metadata
@@ -390,11 +420,11 @@ jobs:
 
         defaults:
             run:
-                working-directory: mobile/native/darwin/Apps/Ensu
+                working-directory: apple/apps/ensu
 
         steps:
             - name: Checkout
-              uses: actions/checkout@v6
+              uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
               with:
                   ref: ${{ needs.build-metadata.outputs.commit_sha }}
 
@@ -450,7 +480,7 @@ jobs:
 
         steps:
             - name: Checkout built commit
-              uses: actions/checkout@v6
+              uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
               with:
                   ref: ${{ needs.build-metadata.outputs.commit_sha }}
 
@@ -463,6 +493,7 @@ jobs:
                   git push --force origin "refs/tags/${RELEASE_TAG}"
 
             - name: Notify Discord
+              if: github.event_name != 'schedule' || needs.build-metadata.outputs.has_new_changes == 'true'
               continue-on-error: true
               env:
                   DISCORD_WEBHOOK: ${{ secrets.DISCORD_INTERNAL_RELEASE_WEBHOOK }}

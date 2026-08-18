@@ -1,9 +1,9 @@
+import "package:ente_components/ente_components.dart";
+import "package:ente_strings/ente_strings.dart";
 import "package:flutter/material.dart";
-import "package:photos/generated/l10n.dart";
 import 'package:photos/models/collection/collection.dart';
 import 'package:photos/models/file/file.dart';
 import "package:photos/services/collections_service.dart";
-import "package:photos/theme/ente_theme.dart";
 import "package:photos/ui/components/collection_share_badge.dart";
 import "package:photos/ui/viewer/file/no_thumbnail_widget.dart";
 import "package:photos/ui/viewer/file/thumbnail_widget.dart";
@@ -27,8 +27,7 @@ class QuickLinkAlbumItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bool isSelected = selectedQuickLinks.contains(c);
-    final colorScheme = getEnteColorScheme(context);
-    final textTheme = getEnteTextTheme(context);
+    final colors = context.componentColors;
 
     return AnimatedContainer(
       curve: Curves.easeOut,
@@ -36,9 +35,9 @@ class QuickLinkAlbumItem extends StatelessWidget {
       constraints: const BoxConstraints(minHeight: _rowHeight),
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
-        color: colorScheme.fill,
+        color: colors.fillLight,
         border: Border.all(
-          color: isSelected ? colorScheme.strokeDark : colorScheme.fill,
+          color: isSelected ? colors.strokeDark : colors.fillLight,
         ),
         borderRadius: const BorderRadius.all(Radius.circular(_cardRadius)),
       ),
@@ -114,10 +113,10 @@ class QuickLinkAlbumItem extends StatelessWidget {
                         builder: (context, snapshot) {
                           if (snapshot.hasData) {
                             return Text(
-                              AppLocalizations.of(
-                                context,
-                              ).itemCount(count: snapshot.data!),
-                              style: textTheme.smallMuted,
+                              context.strings.itemCount(count: snapshot.data!),
+                              style: TextStyles.mini.copyWith(
+                                color: colors.textLight,
+                              ),
                               maxLines: 1,
                               softWrap: false,
                               overflow: TextOverflow.ellipsis,
@@ -125,8 +124,8 @@ class QuickLinkAlbumItem extends StatelessWidget {
                           }
                           return Text(
                             "",
-                            style: textTheme.small.copyWith(
-                              color: colorScheme.textMuted,
+                            style: TextStyles.mini.copyWith(
+                              color: colors.textLight,
                             ),
                             maxLines: 1,
                             softWrap: false,

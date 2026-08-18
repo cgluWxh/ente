@@ -36,7 +36,6 @@ class _RecoveryKeySheetState extends State<RecoveryKeySheet> {
 
   @override
   void dispose() {
-    // Clean up temp file if it exists
     if (_recoveryKeyFile.existsSync()) {
       _recoveryKeyFile.deleteSync();
     }
@@ -47,7 +46,6 @@ class _RecoveryKeySheetState extends State<RecoveryKeySheet> {
   Widget build(BuildContext context) {
     final colors = context.componentColors;
 
-    // Convert recovery key to mnemonic words
     final String recoveryKeyMnemonic = bip39.entropyToMnemonic(
       widget.recoveryKey,
     );
@@ -69,7 +67,7 @@ class _RecoveryKeySheetState extends State<RecoveryKeySheet> {
         const SizedBox(height: 24),
         Container(
           decoration: BoxDecoration(
-            color: colors.primaryDarker,
+            color: colors.primary,
             borderRadius: BorderRadius.circular(16),
           ),
           child: Stack(
@@ -110,7 +108,7 @@ class _RecoveryKeySheetState extends State<RecoveryKeySheet> {
         const SizedBox(height: 16),
         Text(
           context.strings.recoveryKeySaveDescription,
-          style: TextStyles.mini.copyWith(color: colors.textLight),
+          style: TextStyles.body.copyWith(color: colors.textLight),
         ),
         const SizedBox(height: 24),
         ButtonComponent(

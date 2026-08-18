@@ -8,11 +8,8 @@ on:
             - "release/auth-v*"
     workflow_dispatch:
     schedule:
-        # Run every weekday at ~3:45 AM IST
+        # Weekdays at ~3:45 AM IST
         - cron: "15 22 * * 0-4"
-
-env:
-    FLUTTER_VERSION: "3.38.10"
 
 permissions:
     contents: write
@@ -34,12 +31,13 @@ jobs:
             release_title: ${{ steps.prepare.outputs.release_title }}
             release_body: ${{ steps.prepare.outputs.release_body }}
             release_body_grouped: ${{ steps.prepare.outputs.release_body_grouped }}
+            has_new_changes: ${{ steps.prepare.outputs.has_new_changes }}
             play_store_release_notes: ${{ steps.prepare.outputs.play_store_release_notes }}
             artifact_stem: ${{ steps.prepare.outputs.artifact_stem }}
 
         steps:
             - name: Checkout
-              uses: actions/checkout@v6
+              uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
               with:
                   ref: ${{ github.ref_name }}
 
@@ -56,17 +54,18 @@ jobs:
                   fi
 
                   release_version="$(node .github/scripts/flutter-version.mjs auth get)"
-                  build_number_base="$(node .github/scripts/flutter-version.mjs auth get-build-base)"
-                  build_number=$((build_number_base + GITHUB_RUN_NUMBER))
 
                   if [[ "${GITHUB_REF_NAME}" == release/auth-v* ]]; then
                       if [[ "${GITHUB_REF_NAME}" != "release/auth-v${release_version}" ]]; then
                           echo "::error::Branch ${GITHUB_REF_NAME} does not match Auth version ${release_version}"
                           exit 1
                       fi
+                      build_number="$(node .github/scripts/flutter-version.mjs auth get-build-base)"
                       release_tag="auth-v${release_version}-rc"
                       release_title="🔒 Auth release candidate - ${release_version} (build ${build_number})"
                   else
+                      build_number_base="$(node .github/scripts/flutter-version.mjs auth get-build-base)"
+                      build_number=$((build_number_base + GITHUB_RUN_NUMBER))
                       release_tag="auth-v${release_version}-beta"
                       release_title="🔒 Auth nightly - ${release_version} (build ${build_number})"
                   fi
@@ -104,33 +103,24 @@ jobs:
 
         steps:
             - name: Checkout code and submodules
-              uses: actions/checkout@v6
+              uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
               with:
                   ref: ${{ needs.build-metadata.outputs.commit_sha }}
                   submodules: recursive
 
             - name: Setup JDK 17
-              uses: actions/setup-java@v5
+              uses: actions/setup-java@ad2b38190b15e4d6bdf0c97fb4fca8412226d287 # v5.3.0
               with:
                   distribution: "temurin"
                   java-version: "17"
 
-            - name: Install Flutter ${{ env.FLUTTER_VERSION }}
-              uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
-              with:
-                  channel: "stable"
-                  flutter-version: ${{ env.FLUTTER_VERSION }}
-                  cache: true
-
-            - name: Generate strings localizations
-              run: flutter gen-l10n
-              working-directory: mobile/packages/strings
+            - name: Install Flutter
+              uses: ./.github/actions/setup-flutter
 
             - name: Set build version
               run: node ../../../.github/scripts/flutter-version.mjs auth set-build "${RELEASE_VERSION}" "${BUILD_NUMBER}"
 
-            - name: Resolve dependencies with lockfile enforcement
-              run: flutter pub get --enforce-lockfile
+            - run: flutter pub get --enforce-lockfile
 
             - name: Prepare whatsnew
               run: |
@@ -157,7 +147,7 @@ jobs:
 
             - name: Build PlayStore AAB
               run: |
-                  flutter build appbundle --build-name="${RELEASE_VERSION}" --build-number="${BUILD_NUMBER}" --release --flavor playstore --dart-define=app.flavor=playstore --dart-define=cronetHttpNoPlay=true
+                  flutter build appbundle --build-name="${RELEASE_VERSION}" --build-number="${BUILD_NUMBER}" --release --flavor playstore --dart-define=cronetHttpNoPlay=true
               env:
                   SIGNING_KEY_PATH: ${{ runner.temp }}/ente_auth_key.jks
                   SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS_AUTH }}
@@ -165,13 +155,13 @@ jobs:
                   SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD_AUTH }}
 
             - name: Generate checksums
-              run: sha256sum artifacts/ente-auth-*.apk > artifacts/sha256sum-apk
+              run: cd artifacts && sha256sum ente-auth-*.apk > SHA256SUMS-android
 
             - name: Upload checksum snippet
               uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
               with:
-                  name: auth-sha256sum-android
-                  path: mobile/apps/auth/artifacts/sha256sum-apk
+                  name: auth-SHA256SUMS-android
+                  path: mobile/apps/auth/artifacts/SHA256SUMS-android
 
             - name: Mint nightly token
               id: nightly_token
@@ -239,27 +229,18 @@ jobs:
 
         steps:
             - name: Checkout code and submodules
-              uses: actions/checkout@v6
+              uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
               with:
                   ref: ${{ needs.build-metadata.outputs.commit_sha }}
                   submodules: recursive
 
-            - name: Install Flutter ${{ env.FLUTTER_VERSION }}
-              uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
-              with:
-                  channel: "stable"
-                  flutter-version: ${{ env.FLUTTER_VERSION }}
-                  cache: true
-
-            - name: Generate strings localizations
-              run: flutter gen-l10n
-              working-directory: mobile/packages/strings
+            - name: Install Flutter
+              uses: ./.github/actions/setup-flutter
 
             - name: Set build version
               run: node ../../../.github/scripts/flutter-version.mjs auth set-build "${RELEASE_VERSION}" "${BUILD_NUMBER}"
 
-            - name: Resolve dependencies with lockfile enforcement
-              run: flutter pub get --enforce-lockfile
+            - run: flutter pub get --enforce-lockfile
 
             - name: Create artifacts directory
               run: mkdir artifacts
@@ -268,7 +249,7 @@ jobs:
               run: |
                   sudo apt-get update
                   sudo apt-get install -y libsecret-1-dev libsodium-dev libfuse2 ninja-build libgtk-3-dev dpkg-dev pkg-config rpm patchelf libsqlite3-dev locate libayatana-appindicator3-dev libffi-dev libtiff5 xz-utils libarchive-tools libcurl4-openssl-dev
-                  sudo updatedb --localpaths='/usr/lib/x86_64-linux-gnu'
+                  sudo updatedb --localpaths='/usr/lib/x86_64-linux-gnu /lib/x86_64-linux-gnu'
 
             - name: Install fpm for RPM packaging
               run: sudo gem install fpm
@@ -285,22 +266,22 @@ jobs:
                   flutter build linux --release
                   ./linux/packaging/build_rpm.sh
                   mv dist/*/*.rpm "artifacts/${ARTIFACT_STEM}-x86_64.rpm"
-                  dart pub global activate --source git https://github.com/ente-io/fastforgefork --git-ref develop --git-path packages/fastforge
-                  fastforge package --platform=linux --targets=appimage --skip-clean
+                  dart pub global activate --source git https://github.com/ente/fastforgefork --git-ref 3e94e0555db45d0f969307cfc1ca41a2c7c9d2a5 --git-path packages/fastforge
+                  dart pub global run fastforge:main package --platform=linux --targets=appimage --skip-clean
                   appimage_path="$(find dist -name '*-*-linux.AppImage' -print -quit)"
                   ./linux/packaging/post_process_appimage.sh "$appimage_path"
                   mv "$appimage_path" "artifacts/${ARTIFACT_STEM}-x86_64.AppImage"
-                  fastforge package --platform=linux --targets=deb --skip-clean
+                  dart pub global run fastforge:main package --platform=linux --targets=deb --skip-clean
                   mv dist/**/*-*-linux.deb "artifacts/${ARTIFACT_STEM}-x86_64.deb"
 
             - name: Generate checksums
-              run: sha256sum artifacts/ente-auth-*.deb artifacts/ente-auth-*.rpm artifacts/ente-auth-*.AppImage > artifacts/sha256sum-linux
+              run: cd artifacts && sha256sum ente-auth-*.deb ente-auth-*.rpm ente-auth-*.AppImage > SHA256SUMS-linux
 
             - name: Upload checksum snippet
               uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
               with:
-                  name: auth-sha256sum-linux
-                  path: mobile/apps/auth/artifacts/sha256sum-linux
+                  name: auth-SHA256SUMS-linux
+                  path: mobile/apps/auth/artifacts/SHA256SUMS-linux
 
             - name: Mint nightly token
               id: nightly_token
@@ -341,7 +322,8 @@ jobs:
     build-windows:
         needs: build-metadata
         if: needs.build-metadata.outputs.should_build == 'true'
-        runs-on: windows-latest
+        # VS2022 is required until local_auth_windows builds cleanly on VS2026.
+        runs-on: windows-2022
         environment:
             name: production
         env:
@@ -358,48 +340,44 @@ jobs:
 
         steps:
             - name: Checkout code and submodules
-              uses: actions/checkout@v6
+              uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
               with:
                   ref: ${{ needs.build-metadata.outputs.commit_sha }}
                   submodules: recursive
 
-            - name: Install Flutter ${{ env.FLUTTER_VERSION }}
-              uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
-              with:
-                  channel: "stable"
-                  flutter-version: ${{ env.FLUTTER_VERSION }}
-                  cache: true
-
-            - name: Generate strings localizations
-              run: flutter gen-l10n
-              working-directory: mobile/packages/strings
+            - name: Install Flutter
+              uses: ./.github/actions/setup-flutter
 
             - name: Set build version
-              run: node ../../../.github/scripts/flutter-version.mjs auth set-build "${RELEASE_VERSION}" "${BUILD_NUMBER}"
               shell: bash
+              run: node ../../../.github/scripts/flutter-version.mjs auth set-build "${RELEASE_VERSION}" "${BUILD_NUMBER}"
 
-            - name: Resolve dependencies with lockfile enforcement
-              run: flutter pub get --enforce-lockfile
+            # Needed for Pub to checkout flutter/packages on Windows.
+            # https://github.com/dart-lang/pub/issues/3803
+            - name: Enable Git long paths
+              run: git config --global core.longpaths true
+
+            - run: flutter pub get --enforce-lockfile
 
             - name: Create artifacts directory
               run: mkdir artifacts
 
             - name: Build Windows release
+              shell: bash
               run: |
                   flutter config --enable-windows-desktop
                   choco install innosetup -y
                   flutter build windows --release
-              shell: bash
 
             - name: Verify Windows PE allowlist
+              shell: pwsh
               run: |
                   & ./scripts/verify_windows_pe_allowlist.ps1 `
                     -PayloadDir "build/windows/x64/runner/Release" `
                     -AllowlistPath "windows/signing/allowed-pe-files.txt"
-              shell: pwsh
 
             - name: Sign Windows payload with Trusted Signing
-              uses: azure/trusted-signing-action@208f8af4bf26cf2af8597424e3cb5582801523ba # v2.0.0
+              uses: azure/trusted-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
               with:
                   azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
                   azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -416,18 +394,18 @@ jobs:
                   cache-dependencies: false
 
             - name: Verify signed Windows payload
-              run: ./scripts/verify_windows_authenticode.ps1 -Path "build/windows/x64/runner/Release"
               shell: pwsh
+              run: ./scripts/verify_windows_authenticode.ps1 -Path "build/windows/x64/runner/Release"
 
             - name: Build Windows installer
+              shell: pwsh
               run: |
                   & ./scripts/build_windows_installer.ps1 `
                     -SourceDir "build/windows/x64/runner/Release" `
                     -InstallerPath "artifacts/${{ env.ARTIFACT_STEM }}-installer.exe"
-              shell: pwsh
 
             - name: Sign Windows installer with Trusted Signing
-              uses: azure/trusted-signing-action@208f8af4bf26cf2af8597424e3cb5582801523ba # v2.0.0
+              uses: azure/trusted-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
               with:
                   azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
                   azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -442,18 +420,33 @@ jobs:
                   cache-dependencies: false
 
             - name: Verify signed Windows installer
-              run: ./scripts/verify_windows_authenticode.ps1 -Path "artifacts/${{ env.ARTIFACT_STEM }}-installer.exe"
               shell: pwsh
+              run: ./scripts/verify_windows_authenticode.ps1 -Path "artifacts/${{ env.ARTIFACT_STEM }}-installer.exe"
+
+            - name: Zip Windows EXE and DLLs
+              shell: pwsh
+              run: |
+                  Copy-Item -Recurse -Force `
+                    "build/windows/x64/runner/Release" `
+                    "${{ env.ARTIFACT_STEM }}-windows"
+                  $zipPath = "artifacts/${{ env.ARTIFACT_STEM }}-windows.zip"
+                  Compress-Archive `
+                    -Path "${{ env.ARTIFACT_STEM }}-windows" `
+                    -DestinationPath $zipPath `
+                    -Force
+                  Add-Type -AssemblyName System.IO.Compression.FileSystem
+                  $zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $zipPath))
+                  $zip.Dispose()
 
             - name: Generate checksums
-              run: sha256sum artifacts/ente-auth-* > artifacts/sha256sum-windows
               shell: bash
+              run: cd artifacts && sha256sum ente-auth-* > SHA256SUMS-windows
 
             - name: Upload checksum snippet
               uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
               with:
-                  name: auth-sha256sum-windows
-                  path: mobile/apps/auth/artifacts/sha256sum-windows
+                  name: auth-SHA256SUMS-windows
+                  path: mobile/apps/auth/artifacts/SHA256SUMS-windows
 
             - name: Mint nightly token
               id: nightly_token
@@ -472,7 +465,7 @@ jobs:
                   tag: ${{ env.RELEASE_TAG }}
                   name: ${{ env.RELEASE_TAG }}
                   body: ${{ env.RELEASE_BODY }}
-                  artifacts: "mobile/apps/auth/artifacts/ente-auth-*.exe"
+                  artifacts: "mobile/apps/auth/artifacts/ente-auth-*.exe,mobile/apps/auth/artifacts/ente-auth-*.zip"
                   prerelease: true
                   makeLatest: false
                   allowUpdates: true
@@ -486,7 +479,7 @@ jobs:
                   name: ${{ env.RELEASE_TAG }}
                   body: ${{ env.RELEASE_BODY }}
                   commit: ${{ env.COMMIT_SHA }}
-                  artifacts: "mobile/apps/auth/artifacts/ente-auth-*.exe"
+                  artifacts: "mobile/apps/auth/artifacts/ente-auth-*.exe,mobile/apps/auth/artifacts/ente-auth-*.zip"
                   draft: true
                   allowUpdates: true
                   updateOnlyUnreleased: true
@@ -511,27 +504,18 @@ jobs:
 
         steps:
             - name: Checkout code and submodules
-              uses: actions/checkout@v6
+              uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
               with:
                   ref: ${{ needs.build-metadata.outputs.commit_sha }}
                   submodules: recursive
 
-            - name: Install Flutter ${{ env.FLUTTER_VERSION }}
-              uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
-              with:
-                  channel: "stable"
-                  flutter-version: ${{ env.FLUTTER_VERSION }}
-                  cache: true
-
-            - name: Generate strings localizations
-              run: flutter gen-l10n
-              working-directory: mobile/packages/strings
+            - name: Install Flutter
+              uses: ./.github/actions/setup-flutter
 
             - name: Set build version
               run: node ../../../.github/scripts/flutter-version.mjs auth set-build "${RELEASE_VERSION}" "${BUILD_NUMBER}"
 
-            - name: Resolve dependencies with lockfile enforcement
-              run: flutter pub get --enforce-lockfile
+            - run: flutter pub get --enforce-lockfile
 
             - name: Install code signing dependencies
               run: pip3 install codemagic-cli-tools --break-system-packages
@@ -562,20 +546,14 @@ jobs:
                   BUILD_CERTIFICATE_BASE64: ${{ secrets.MAC_OS_CERTIFICATE }}
                   P12_PASSWORD: ${{ secrets.MAC_OS_CERTIFICATE_PASSWORD }}
 
-            - name: Install build dependencies
-              run: |
-                  pip3 install setuptools --break-system-packages
-                  npm install -g appdmg
-
             - name: Create artifacts directory
               run: mkdir artifacts
 
             - name: Build macOS DMG
               run: |
                   flutter config --enable-macos-desktop
-                  dart pub global activate --source git https://github.com/ente-io/fastforgefork --git-ref develop --git-path packages/fastforge
-                  fastforge package --platform=macos --targets=dmg --skip-clean
-                  mv dist/**/*-macos.dmg "artifacts/${ARTIFACT_STEM}.dmg"
+                  flutter build macos --release
+                  ./macos/packaging/dmg/make-dmg.sh "build/macos/Build/Products/Release/Ente Auth.app" "artifacts/${ARTIFACT_STEM}.dmg"
 
             - name: Code sign DMG
               run: |
@@ -597,13 +575,13 @@ jobs:
                   APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
             - name: Generate checksums
-              run: shasum -a 256 artifacts/ente-auth-* > artifacts/sha256sum-macos
+              run: cd artifacts && shasum -a 256 ente-auth-* > SHA256SUMS-macos
 
             - name: Upload checksum snippet
               uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
               with:
-                  name: auth-sha256sum-macos
-                  path: mobile/apps/auth/artifacts/sha256sum-macos
+                  name: auth-SHA256SUMS-macos
+                  path: mobile/apps/auth/artifacts/SHA256SUMS-macos
 
             - name: Mint nightly token
               id: nightly_token
@@ -657,27 +635,18 @@ jobs:
 
         steps:
             - name: Checkout code and submodules
-              uses: actions/checkout@v6
+              uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
               with:
                   ref: ${{ needs.build-metadata.outputs.commit_sha }}
                   submodules: recursive
 
-            - name: Install Flutter ${{ env.FLUTTER_VERSION }}
-              uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
-              with:
-                  channel: "stable"
-                  flutter-version: ${{ env.FLUTTER_VERSION }}
-                  cache: true
-
-            - name: Generate strings localizations
-              run: flutter gen-l10n
-              working-directory: mobile/packages/strings
+            - name: Install Flutter
+              uses: ./.github/actions/setup-flutter
 
             - name: Set build version
               run: node ../../../.github/scripts/flutter-version.mjs auth set-build "${RELEASE_VERSION}" "${BUILD_NUMBER}"
 
-            - name: Resolve dependencies with lockfile enforcement
-              run: flutter pub get --enforce-lockfile
+            - run: flutter pub get --enforce-lockfile
 
             - name: Install iOS pods
               run: pod install --deployment
@@ -732,19 +701,19 @@ jobs:
 
         steps:
             - name: Checkout built commit
-              uses: actions/checkout@v6
+              uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
               with:
                   ref: ${{ needs.build-metadata.outputs.commit_sha }}
 
             - name: Download checksum snippets
               uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
               with:
-                  pattern: auth-sha256sum-*
+                  pattern: auth-SHA256SUMS-*
                   path: checksums
                   merge-multiple: true
 
             - name: Combine checksums
-              run: cat checksums/sha256sum-* > sha256sum
+              run: sort -k2 checksums/SHA256SUMS-* > SHA256SUMS
 
             - name: Point release tag at the successfully built commit
               env:
@@ -767,16 +736,17 @@ jobs:
               env:
                   GH_TOKEN: ${{ steps.nightly_token.outputs.token }}
                   RELEASE_TAG: ${{ needs.build-metadata.outputs.release_tag }}
-              run: gh release upload "${RELEASE_TAG}" sha256sum --clobber --repo ente-io/nightly
+              run: gh release upload "${RELEASE_TAG}" SHA256SUMS --clobber --repo ente/nightly
 
             - name: Upload checksum to RC draft
               if: startsWith(github.ref_name, 'release/')
               env:
                   GH_TOKEN: ${{ github.token }}
                   RELEASE_TAG: ${{ needs.build-metadata.outputs.release_tag }}
-              run: gh release upload "${RELEASE_TAG}" sha256sum --clobber
+              run: gh release upload "${RELEASE_TAG}" SHA256SUMS --clobber
 
             - name: Notify Discord
+              if: github.event_name != 'schedule' || needs.build-metadata.outputs.has_new_changes == 'true'
               continue-on-error: true
               env:
                   DISCORD_WEBHOOK: ${{ secrets.DISCORD_INTERNAL_RELEASE_WEBHOOK }}

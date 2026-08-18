@@ -4,6 +4,7 @@ import {
     ArrowRight01Icon,
     Cancel01Icon,
     Delete01Icon,
+    Edit01Icon,
     PlusSignIcon,
     Search01Icon,
 } from "@hugeicons/core-free-icons";
@@ -20,10 +21,12 @@ import {
     Typography,
 } from "@mui/material";
 import type { SxProps, Theme } from "@mui/material/styles";
-import { savedLocalUser } from "ente-accounts/services/accounts-db";
 import React, { memo } from "react";
 
-type IconProps = { size: number; strokeWidth: number };
+interface IconProps {
+    size: number;
+    strokeWidth: number;
+}
 
 export interface ChatSidebarProps {
     drawerCollapsed: boolean;
@@ -40,11 +43,11 @@ export interface ChatSidebarProps {
     handleNewChat: () => void;
     handleOpenDrawer: () => void;
     handleCollapseDrawer: () => void;
-    groupedSessions: Array<[string, ChatSession[]]>;
+    groupedSessions: [string, ChatSession[]][];
     currentSessionId?: string;
     handleSelectSession: (sessionId: string) => void;
+    requestRenameSession: (session: ChatSession) => void;
     requestDeleteSession: (sessionId: string) => void;
-    isLoggedIn: boolean;
     openSettingsModal: () => void;
 }
 
@@ -67,8 +70,8 @@ export const ChatSidebar = memo(
         groupedSessions,
         currentSessionId,
         handleSelectSession,
+        requestRenameSession,
         requestDeleteSession,
-        isLoggedIn,
         openSettingsModal,
     }: ChatSidebarProps) => (
         <Stack
@@ -284,7 +287,7 @@ export const ChatSidebar = memo(
                         </Typography>
                         {group.map((session) => {
                             const sessionTitle =
-                                session.title?.trim() || "New chat";
+                                session.title.trim() || "New chat";
                             return (
                                 <ListItemButton
                                     key={session.sessionUuid}
@@ -308,6 +311,11 @@ export const ChatSidebar = memo(
                                         "&.Mui-selected:hover": {
                                             backgroundColor: "fill.faintHover",
                                         },
+                                        "& .rename-chat-button": {
+                                            visibility: "hidden",
+                                        },
+                                        "&:hover .rename-chat-button, &:focus-within .rename-chat-button":
+                                            { visibility: "visible" },
                                     }}
                                 >
                                     <Stack
@@ -349,6 +357,20 @@ export const ChatSidebar = memo(
                                                     "Nothing here"}
                                             </Typography>
                                         </Box>
+                                        <IconButton
+                                            className="rename-chat-button"
+                                            aria-label="Rename chat"
+                                            sx={actionButtonSx}
+                                            onClick={(event) => {
+                                                event.stopPropagation();
+                                                requestRenameSession(session);
+                                            }}
+                                        >
+                                            <HugeiconsIcon
+                                                icon={Edit01Icon}
+                                                {...actionIconProps}
+                                            />
+                                        </IconButton>
                                         <IconButton
                                             aria-label="Delete chat"
                                             sx={actionButtonSx}
@@ -394,9 +416,7 @@ export const ChatSidebar = memo(
                             variant="small"
                             sx={{ flex: 1, fontWeight: 600 }}
                         >
-                            {isLoggedIn
-                                ? (savedLocalUser()?.email ?? "Account")
-                                : "Settings"}
+                            Settings
                         </Typography>
                         <HugeiconsIcon
                             icon={ArrowRight01Icon}

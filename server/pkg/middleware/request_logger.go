@@ -9,15 +9,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ente-io/museum/pkg/utils/network"
+	"github.com/ente/museum/pkg/utils/network"
 
-	"github.com/ente-io/museum/pkg/utils/auth"
-	"github.com/ente-io/stacktrace"
+	"github.com/ente/museum/pkg/utils/auth"
+	"github.com/ente/stacktrace"
 	"github.com/gin-contrib/requestid"
 
-	timeUtil "github.com/ente-io/museum/pkg/utils/time"
+	timeUtil "github.com/ente/museum/pkg/utils/time"
 
-	"github.com/ente-io/museum/pkg/utils/handler"
+	"github.com/ente/museum/pkg/utils/handler"
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -30,9 +30,23 @@ var latency = promauto.NewHistogramVec(prometheus.HistogramOpts{
 	Buckets: []float64{10, 50, 100, 200, 500, 1000, 10000, 30000, 60000, 120000, 600000},
 }, []string{"code", "method", "host", "url"})
 
-// shouldSkipBodyLog returns true if the body should not be logged.
-// This is useful for endpoints that receive large or sensitive payloads.
+// Skip read-only requests and writes with large or sensitive bodies.
 func shouldSkipBodyLog(method string, path string) bool {
+	isReadOnly := method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions
+	if !isReadOnly {
+		switch path {
+		case "/users/srp/setup",
+			"/users/two-factor/remove",
+			"/users/two-factor/passkeys/configure-recovery",
+			"/emergency-contacts/init-change-password",
+			"/legacy-kits/recovery/open",
+			"/legacy-kits/recovery/session",
+			"/legacy-kits/recovery/info",
+			"/legacy-kits/recovery/init-change-password",
+			"/legacy-kits/recovery/change-password":
+			return true
+		}
+	}
 	if method == "PUT" && path == "/embeddings" {
 		return true
 	}
@@ -51,13 +65,24 @@ func shouldSkipBodyLog(method string, path string) bool {
 	if path == "/admin/user/terminate-session" {
 		return true
 	}
+	if method == http.MethodPost && (path == "/events" || path == "/events/user") {
+		return true
+	}
 	if method == http.MethodPost && (path == "/paste/create" || path == "/paste/guard" || path == "/paste/consume") {
+		return true
+	}
+	if method == http.MethodPost && (path == "/users/recover-account" || path == "/users/recover-account/validate") {
+		return true
+	}
+	if !isReadOnly && (strings.HasPrefix(path, "/space") || strings.HasPrefix(path, "/account/space")) {
+		return true
+	}
+	if !isReadOnly && (path == "/user-entity/key" || path == "/user-entity/key/ensure") {
 		return true
 	}
 	return false
 }
 
-// Logger logs the details regarding an incoming request
 func Logger(urlSanitizer func(_ *gin.Context) string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		startTime := time.Now()
@@ -67,7 +92,6 @@ func Logger(urlSanitizer func(_ *gin.Context) string) gin.HandlerFunc {
 			handler.Error(c, err)
 		}
 		rdr1 := io.NopCloser(bytes.NewBuffer(buf))
-		// Creating a new Buffer, because rdr1 will be read
 		rdr2 := io.NopCloser(bytes.NewBuffer(buf))
 
 		userAgent := c.GetHeader("User-Agent")
@@ -103,7 +127,6 @@ func Logger(urlSanitizer func(_ *gin.Context) string) gin.HandlerFunc {
 		}
 		reqContextLogger.Info("incoming")
 		c.Request.Body = rdr2
-		// Processing request
 		c.Next()
 		statusCode := c.Writer.Status()
 		latencyTime := time.Since(startTime)

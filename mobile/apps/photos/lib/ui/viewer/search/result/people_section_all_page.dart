@@ -2,6 +2,8 @@ import "dart:async";
 
 import "package:ente_components/ente_components.dart";
 import "package:ente_pure_utils/ente_pure_utils.dart";
+import "package:ente_strings/ente_strings.dart";
+import "package:ente_ui/components/loading_widget.dart";
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import "package:hugeicons/hugeicons.dart";
@@ -10,7 +12,6 @@ import "package:photos/core/event_bus.dart";
 import "package:photos/events/event.dart";
 import "package:photos/events/people_changed_event.dart";
 import "package:photos/events/people_sort_order_change_event.dart";
-import "package:photos/generated/intl/app_localizations.dart";
 import "package:photos/models/search/generic_search_result.dart";
 import "package:photos/models/search/recent_searches.dart";
 import "package:photos/models/search/search_constants.dart";
@@ -20,22 +21,21 @@ import "package:photos/models/selected_people.dart";
 import "package:photos/service_locator.dart";
 import "package:photos/services/machine_learning/face_ml/face_filtering/face_filtering_constants.dart";
 import "package:photos/services/search_service.dart";
+import "package:photos/settings/local_settings.dart";
 import "package:photos/theme/colors.dart";
 import "package:photos/theme/ente_theme.dart";
 import "package:photos/theme/text_style.dart";
-import "package:photos/ui/common/loading_widget.dart";
 import "package:photos/ui/components/banners/save_faces_banner.dart";
 import "package:photos/ui/components/bottom_action_bar/people_bottom_action_bar_widget.dart";
+import "package:photos/ui/components/collection_share_badge.dart";
 import "package:photos/ui/viewer/actions/select_all_status_icon.dart";
 import "package:photos/ui/viewer/file/no_thumbnail_widget.dart";
 import "package:photos/ui/viewer/file/thumbnail_widget.dart";
 import "package:photos/ui/viewer/people/face_thumbnail_squircle.dart";
 import "package:photos/ui/viewer/people/person_face_widget.dart";
 import "package:photos/ui/viewer/people/person_gallery_suggestion.dart";
-import "package:photos/ui/viewer/people/pinned_person_badge.dart";
 import "package:photos/ui/viewer/search/result/search_result_page.dart";
 import "package:photos/ui/viewer/search_tab/people_section.dart";
-import "package:photos/utils/local_settings.dart";
 import "package:photos/utils/people_sort_util.dart";
 
 class PeopleSectionAllPage extends StatefulWidget {
@@ -62,6 +62,7 @@ class _PeopleSectionAllPageState extends State<PeopleSectionAllPage> {
             selectedPeople: _selectedPeople,
             showSearchBar: true,
             startInSearchMode: widget.startInSearchMode,
+            includeEmptyPersons: true,
           ),
           bottomNavigationBar: hasSelection
               ? PeopleBottomActionBarWidget(
@@ -81,12 +82,14 @@ class PeopleSectionAllSelectionWrapper extends StatefulWidget {
   final SelectedPeople selectedPeople;
   final bool showSearchBar;
   final bool startInSearchMode;
+  final bool includeEmptyPersons;
 
   const PeopleSectionAllSelectionWrapper({
     super.key,
     required this.selectedPeople,
     this.showSearchBar = false,
     this.startInSearchMode = false,
+    this.includeEmptyPersons = false,
   });
 
   @override
@@ -102,6 +105,7 @@ class _PeopleSectionAllSelectionWrapperState
       selectedPeople: widget.selectedPeople,
       showSearchBar: widget.showSearchBar,
       startInSearchMode: widget.startInSearchMode,
+      includeEmptyPersons: widget.includeEmptyPersons,
     );
   }
 }
@@ -259,9 +263,9 @@ class SelectablePersonSearchExample extends StatelessWidget {
                   ),
                   if (isPinnedPerson)
                     const Positioned(
-                      left: -6,
-                      top: -6,
-                      child: PinnedPersonBadge(),
+                      left: 8,
+                      bottom: 8,
+                      child: PinnedBadge(size: 16),
                     ),
                 ],
               ),
@@ -319,12 +323,14 @@ class PeopleSectionAllWidget extends StatefulWidget {
     this.namedOnly = false,
     this.showSearchBar = false,
     this.startInSearchMode = false,
+    this.includeEmptyPersons = false,
   });
 
   final SelectedPeople? selectedPeople;
   final bool namedOnly;
   final bool showSearchBar;
   final bool startInSearchMode;
+  final bool includeEmptyPersons;
 
   @override
   State<PeopleSectionAllWidget> createState() => _PeopleSectionAllWidgetState();
@@ -489,6 +495,7 @@ class _PeopleSectionAllWidgetState extends State<PeopleSectionAllWidget> {
       null,
       minClusterSize: kMinimumClusterSizeAllFaces,
       showIgnoredOnly: _showingIgnoredPeople,
+      includeEmptyPersons: widget.includeEmptyPersons,
     );
     normalFaces.clear();
     extraFaces.clear();
@@ -524,7 +531,6 @@ class _PeopleSectionAllWidgetState extends State<PeopleSectionAllWidget> {
       results.removeWhere((element) => element.params[kPersonParamID] == null);
 
       if (init) {
-        // sort widget.selectedPeople first
         results.sort((a, b) {
           final aIndex =
               widget.selectedPeople?.personIds.contains(
@@ -650,6 +656,7 @@ class _PeopleSectionAllWidgetState extends State<PeopleSectionAllWidget> {
         MediaQuery.textScalerOf(context).scale(smallFontSize) / smallFontSize;
     const horizontalEdgePadding = 20.0;
     const gridPadding = 16.0;
+    const labelHeight = 28.0;
 
     return FutureBuilder<List<GenericSearchResult>>(
       future: sectionData,
@@ -682,9 +689,7 @@ class _PeopleSectionAllWidgetState extends State<PeopleSectionAllWidget> {
             slivers.add(
               SliverFillRemaining(
                 child: Center(
-                  child: Text(
-                    AppLocalizations.of(context).noResultsFound + '.',
-                  ),
+                  child: Text(context.strings.noResultsFound + '.'),
                 ),
               ),
             );
@@ -698,6 +703,7 @@ class _PeopleSectionAllWidgetState extends State<PeopleSectionAllWidget> {
                   ((horizontalEdgePadding * 2) +
                       ((crossAxisCount - 1) * gridPadding))) /
               crossAxisCount;
+          final gridItemHeight = itemSize + (labelHeight * textScaleFactor);
 
           if (_isSearching) {
             final searchResults = [
@@ -718,8 +724,7 @@ class _PeopleSectionAllWidgetState extends State<PeopleSectionAllWidget> {
                     mainAxisSpacing: gridPadding,
                     crossAxisSpacing: gridPadding,
                     crossAxisCount: crossAxisCount,
-                    childAspectRatio:
-                        itemSize / (itemSize + (24 * textScaleFactor)),
+                    childAspectRatio: itemSize / gridItemHeight,
                   ),
                   delegate: SliverChildBuilderDelegate(
                     childCount: searchResults.length,
@@ -789,8 +794,7 @@ class _PeopleSectionAllWidgetState extends State<PeopleSectionAllWidget> {
                     mainAxisSpacing: gridPadding,
                     crossAxisSpacing: gridPadding,
                     crossAxisCount: crossAxisCount,
-                    childAspectRatio:
-                        itemSize / (itemSize + (24 * textScaleFactor)),
+                    childAspectRatio: itemSize / gridItemHeight,
                   ),
                   delegate: SliverChildBuilderDelegate(
                     childCount: filteredNormalFaces.length,
@@ -827,8 +831,7 @@ class _PeopleSectionAllWidgetState extends State<PeopleSectionAllWidget> {
                       mainAxisSpacing: gridPadding,
                       crossAxisSpacing: gridPadding,
                       crossAxisCount: crossAxisCount,
-                      childAspectRatio:
-                          itemSize / (itemSize + (24 * textScaleFactor)),
+                      childAspectRatio: itemSize / gridItemHeight,
                     ),
                     delegate: SliverChildBuilderDelegate(
                       childCount: filteredExtraFaces.length,
@@ -891,7 +894,7 @@ class _PeopleSectionAllWidgetState extends State<PeopleSectionAllWidget> {
       layoutBuilder: (currentChild, previousChildren) => Stack(
         alignment: Alignment.centerLeft,
         clipBehavior: Clip.none,
-        children: [...previousChildren, if (currentChild != null) currentChild],
+        children: [...previousChildren, ?currentChild],
       ),
       transitionBuilder: (child, animation) {
         final curvedAnimation = CurvedAnimation(
@@ -972,7 +975,7 @@ class _PeopleSectionAllWidgetState extends State<PeopleSectionAllWidget> {
     return TextInputComponent(
       controller: _searchController,
       focusNode: _searchFocusNode,
-      hintText: AppLocalizations.of(context).search,
+      hintText: context.strings.search,
       autofocus: true,
       shouldUnfocusOnClearOrSubmit: true,
       prefix: HugeIcon(
@@ -1000,7 +1003,7 @@ class _PeopleSectionAllWidgetState extends State<PeopleSectionAllWidget> {
       shouldSurfaceExecutionStates: false,
       icon: const HugeIcon(icon: HugeIcons.strokeRoundedFilterHorizontal),
       onTapDown: (details) async {
-        final l10n = AppLocalizations.of(context);
+        final l10n = context.strings;
         const sortKeys = PeopleSortKey.values;
         final PeopleSortKey? selectedKey = await showMenu<PeopleSortKey>(
           color: colorScheme.backgroundElevated,
@@ -1058,7 +1061,7 @@ class _PeopleSectionAllWidgetState extends State<PeopleSectionAllWidget> {
     bool isLast,
     EnteTextTheme textTheme,
     EnteColorScheme colorScheme,
-    AppLocalizations l10n,
+    StringsLocalizations l10n,
   ) {
     String label;
     switch (key) {
@@ -1141,7 +1144,7 @@ class _PeopleSectionAllWidgetState extends State<PeopleSectionAllWidget> {
     BuildContext context,
     EnteTextTheme textTheme,
     EnteColorScheme colorScheme,
-    AppLocalizations l10n,
+    StringsLocalizations l10n,
   ) {
     return PopupMenuItem<PeopleSortKey>(
       value: null,
@@ -1208,8 +1211,8 @@ class _PeopleSectionAllWidgetState extends State<PeopleSectionAllWidget> {
             children: [
               Text(
                 _showingAllFaces
-                    ? AppLocalizations.of(context).showLessFaces
-                    : AppLocalizations.of(context).showMoreFaces,
+                    ? context.strings.showLessFaces
+                    : context.strings.showMoreFaces,
                 style: getEnteTextTheme(
                   context,
                 ).small.copyWith(color: Theme.of(context).colorScheme.primary),

@@ -2,11 +2,15 @@ import { Box } from "@mui/material";
 import { useRouter } from "next/router";
 import { memo, useEffect, useRef, useState } from "react";
 
-type HoverRiveLogoProps = { staticSrc: string; alt: string; sizePx?: number };
+interface HoverRiveLogoProps {
+    staticSrc: string;
+    alt: string;
+    sizePx?: number;
+}
 
 type RivePlaybackTarget = string | string[];
 
-type RiveInstance = {
+interface RiveInstance {
     cleanup?: () => void;
     resizeDrawingSurfaceToCanvas?: () => void;
     play?: (animation?: RivePlaybackTarget) => void;
@@ -15,7 +19,7 @@ type RiveInstance = {
     reset?: () => void;
     animationNames?: string[];
     stateMachineNames?: string[];
-};
+}
 
 const RIVE_SRC = "/animations/ensu.riv";
 
@@ -30,7 +34,7 @@ const HoverRiveLogo = memo(
         const [isReady, setIsReady] = useState(false);
         const [failedToLoad, setFailedToLoad] = useState(false);
         const { basePath } = useRouter();
-        const riveSrc = `${basePath ?? ""}${RIVE_SRC}`;
+        const riveSrc = `${basePath}${RIVE_SRC}`;
 
         useEffect(() => {
             if (typeof window === "undefined") return;
@@ -72,7 +76,8 @@ const HoverRiveLogo = memo(
 
                                 riveRef.current?.pause?.();
                             } catch {
-                                // noop
+                                // The logo animation is decorative; ignore
+                                // Rive runtime errors.
                             }
                             if (!canceled) {
                                 setIsReady(true);
@@ -98,7 +103,8 @@ const HoverRiveLogo = memo(
                 try {
                     riveRef.current?.cleanup?.();
                 } catch {
-                    // noop
+                    // The logo animation is decorative; ignore Rive runtime
+                    // errors.
                 }
                 riveRef.current = null;
                 playbackTargetRef.current = undefined;
@@ -116,7 +122,8 @@ const HoverRiveLogo = memo(
                     riveRef.current?.play?.();
                 }
             } catch {
-                // noop
+                // The logo animation is decorative; ignore Rive runtime
+                // errors.
             }
         };
 
@@ -126,7 +133,8 @@ const HoverRiveLogo = memo(
                 riveRef.current?.pause?.();
                 riveRef.current?.stop?.();
             } catch {
-                // noop
+                // The logo animation is decorative; ignore Rive runtime
+                // errors.
             }
         };
 
@@ -162,8 +170,6 @@ const HoverRiveLogo = memo(
                 <Box
                     component="canvas"
                     ref={canvasRef}
-                    width={sizePx}
-                    height={sizePx}
                     aria-label={`${alt} animation`}
                     sx={{
                         position: "absolute",

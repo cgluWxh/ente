@@ -1,4 +1,4 @@
-name: "Lint (mobile)"
+name: "Lint (Mobile)"
 
 on:
     pull_request:
@@ -9,24 +9,26 @@ on:
             - "rust/bindings/frb/**"
             - "rust/Cargo.lock"
             - "rust/Cargo.toml"
+            - "rust/crates/cast/**"
             - "rust/crates/contacts/**"
             - "rust/crates/core/**"
             - "rust/crates/image/**"
+            - "rust/crates/ml/**"
             - "rust/crates/photos/**"
     workflow_dispatch:
-
-env:
-    FLUTTER_VERSION: "3.38.10"
 
 permissions:
     contents: read
 
+env:
+    RUSTFLAGS: -D warnings
+
 jobs:
     lint:
-        runs-on: macos-26
+        runs-on: ubuntu-latest
         steps:
             - name: Checkout code and submodules
-              uses: actions/checkout@v6
+              uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
               with:
                   submodules: recursive
 
@@ -65,56 +67,51 @@ jobs:
                   done
               working-directory: mobile/apps/auth
 
-            - name: Install Flutter ${{ env.FLUTTER_VERSION }}
-              uses: subosito/flutter-action@v2
+            - name: Install Flutter
+              uses: ./.github/actions/setup-flutter
+
+            # Restore-only; primed on main by warm-caches.yml.
+            - name: Restore Rust cache
+              uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
               with:
-                  channel: "stable"
-                  flutter-version: ${{ env.FLUTTER_VERSION }}
-                  cache: true
+                  workspaces: rust
+                  shared-key: rust-flutter
+                  save-if: false
 
             - run: cargo codegen frb
               working-directory: rust
 
-            - run: cargo clippy -p ente_photos_rust --features flutter --all-targets --locked -- -D warnings
+            - run: cargo clippy -p ente_photos_rust --features flutter --all-targets --locked
               working-directory: rust
 
-            - run: cargo clippy -p ente_rust --features flutter --all-targets --locked -- -D warnings
+            - run: cargo clippy -p ente-locker-frb --features flutter --all-targets --locked
               working-directory: rust
 
-            - name: Generate strings localizations
-              run: flutter gen-l10n
-              working-directory: mobile/packages/strings
+            - run: flutter pub get --enforce-lockfile
+              working-directory: mobile
 
-            - name: Lint packages
-              run: |
-                  for pubspec in mobile/packages/*/pubspec.yaml; do
-                      package_dir=${pubspec%/pubspec.yaml}
-                      package=${package_dir##*/}
-                      echo "Linting $package"
-                      (
-                          cd "$package_dir"
-                          flutter pub get --enforce-lockfile
-                          dart format --output=none --set-exit-if-changed .
-                          flutter analyze
-                          if [[ -d test ]]; then
-                              flutter test
-                          fi
-                      )
-                  done
+            - run: dart format --output=none --set-exit-if-changed .
+              working-directory: mobile
 
-            - name: Lint apps
+            - run: flutter analyze --no-pub
+              working-directory: mobile
+
+            - name: Test
+              working-directory: mobile
               run: |
-                  for app in photos auth locker; do
-                      echo "Linting $app"
-                      (
-                          cd "mobile/apps/$app"
-                          flutter pub get --enforce-lockfile
-                          (cd ios && pod install --deployment)
-                          if [[ "$app" != "photos" ]]; then
-                              flutter gen-l10n
+                  test_package() (
+                      member=${1#"$PWD/"}
+                      echo "Testing $member"
+                      cd "$member"
+                      flutter test --no-pub
+                  )
+                  export -f test_package
+
+                  dart pub workspace list --json |
+                      jq -r '.packages[] | select(.name != "ente_workspace") | .path' |
+                      while IFS= read -r member; do
+                          if [[ -d "$member/test" ]]; then
+                              printf '%s\n' "$member"
                           fi
-                          dart format --output=none --set-exit-if-changed .
-                          flutter analyze
-                          flutter test
-                      )
-                  done
+                      done |
+                      xargs -P4 -n1 bash -e -c 'test_package "$1"' _

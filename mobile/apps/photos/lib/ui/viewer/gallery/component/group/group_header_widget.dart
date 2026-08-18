@@ -1,10 +1,10 @@
 import "package:ente_components/ente_components.dart" as components;
 import "package:ente_components/theme/text_styles.dart";
+import "package:ente_strings/ente_strings.dart";
 import "package:flutter/material.dart";
 import "package:flutter/services.dart";
 import "package:flutter_animate/flutter_animate.dart";
 import "package:photos/core/constants.dart";
-import "package:photos/generated/l10n.dart";
 import "package:photos/models/file/dummy_file.dart";
 import "package:photos/models/file/file.dart";
 import "package:photos/models/selected_files.dart";
@@ -100,11 +100,10 @@ class _GroupHeaderWidgetState extends State<GroupHeaderWidget> {
               child: Text(
                 widget.title,
                 style:
-                    (widget.title == AppLocalizations.of(context).dayToday ||
-                        widget.title == AppLocalizations.of(context).thisWeek ||
-                        widget.title ==
-                            AppLocalizations.of(context).thisMonth ||
-                        widget.title == AppLocalizations.of(context).thisYear)
+                    (widget.title == context.strings.dayToday ||
+                        widget.title == context.strings.thisWeek ||
+                        widget.title == context.strings.thisMonth ||
+                        widget.title == context.strings.thisYear)
                     ? textStyle
                     : textStyle.copyWith(color: colorScheme.textMuted),
                 maxLines: 1,
@@ -148,7 +147,6 @@ class _GroupHeaderWidgetState extends State<GroupHeaderWidget> {
                           child: widget.fadeInTrailingIcons
                               ? Icon(
                                   Icons.more_vert_outlined,
-                                  // color: colorScheme.blurStrokeBase,
                                   color: componentColors.textLighter,
                                 ).animate().fadeIn(
                                   duration: const Duration(
@@ -166,7 +164,6 @@ class _GroupHeaderWidgetState extends State<GroupHeaderWidget> {
                                 )
                               : Icon(
                                   Icons.more_vert_outlined,
-                                  // color: colorScheme.blurStrokeBase,
                                   color: componentColors.textLighter,
                                 ),
                         ),
@@ -181,7 +178,6 @@ class _GroupHeaderWidgetState extends State<GroupHeaderWidget> {
 
   void _selectedFilesListener() {
     if (widget.selectedFiles == null) return;
-    // Filter out dummy files before checking selection state
     final nonDummyFiles = widget.filesInGroup
         .where((file) => file is! DummyFile)
         .toSet();
@@ -213,7 +209,6 @@ class _GroupHeaderWidgetState extends State<GroupHeaderWidget> {
   }
 
   bool _areAllFromGroupSelected() {
-    // Filter out dummy files before checking selection state
     final nonDummyFiles = widget.filesInGroup
         .where((file) => file is! DummyFile)
         .toSet();
@@ -226,9 +221,8 @@ class _GroupHeaderWidgetState extends State<GroupHeaderWidget> {
   }
 
   void _showLayoutSettingsOverflowMenu(BuildContext context) {
-    showModalBottomSheet(
+    components.showBottomSheetComponent<void>(
       context: context,
-      backgroundColor: getEnteColorScheme(context).backgroundElevated,
       builder: (BuildContext context) {
         return const GalleryLayoutSettings();
       },

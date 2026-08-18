@@ -2,8 +2,6 @@ import 'dart:io';
 
 import 'package:ente_pure_utils/ente_pure_utils.dart';
 import 'package:flutter/material.dart';
-// import 'package:flutter/foundation.dart';
-// import 'package:flutter_inapp_purchase/flutter_inapp_purchase.dart';
 import 'package:logging/logging.dart';
 import "package:photos/gateways/billing/billing_gateway.dart";
 import 'package:photos/gateways/billing/models/billing_plan.dart';
@@ -59,9 +57,9 @@ class BillingService {
   }
 
   Future<Subscription> verifySubscription(
-    final productID,
-    final verificationData, {
-    final paymentProvider,
+    final String productID,
+    final String verificationData, {
+    final String? paymentProvider,
   }) async {
     try {
       return await _gateway.verifySubscription(
@@ -136,6 +134,7 @@ class BillingService {
         ),
       );
     } catch (e) {
+      if (!context.mounted) return;
       await showGenericErrorDialog(context: context, error: e);
     }
   }

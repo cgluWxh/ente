@@ -3,12 +3,12 @@ import 'dart:typed_data';
 
 import 'package:ente_accounts/ente_accounts.dart';
 import 'package:ente_accounts/models/errors.dart';
+import 'package:ente_components/ente_components.dart';
 import 'package:ente_configuration/base_configuration.dart';
 import 'package:ente_crypto_api/ente_crypto_api.dart';
 import 'package:ente_strings/ente_strings.dart';
 import "package:ente_ui/components/alert_bottom_sheet.dart";
 import 'package:ente_ui/components/buttons/dynamic_fab.dart';
-import "package:ente_ui/components/buttons/gradient_button.dart";
 import 'package:ente_ui/pages/base_home_page.dart';
 import 'package:ente_ui/theme/ente_theme.dart';
 import 'package:ente_ui/utils/dialog_util.dart';
@@ -115,10 +115,14 @@ class _PasswordReentryPageState extends State<PasswordReentryPage> {
         password,
         widget.config.getKeyAttributes()!,
       );
+      unawaited(UserService.instance.autoAttributePendingSource());
       _registerSRPForExistingUsers(kek).ignore();
     } on KeyDerivationError catch (e, s) {
       _logger.severe("Password verification failed", e, s);
       await dialog.hide();
+      if (!mounted) {
+        return;
+      }
 
       final result = await showAlertBottomSheet<bool>(
         context,
@@ -126,15 +130,16 @@ class _PasswordReentryPageState extends State<PasswordReentryPage> {
         message: context.strings.recreatePasswordBody,
         assetPath: 'assets/warning-grey.png',
         buttons: [
-          GradientButton(
-            text: context.strings.useRecoveryKey,
+          ButtonComponent(
+            label: context.strings.useRecoveryKey,
             onTap: () {
               Navigator.of(context).pop(true);
             },
+            shouldSurfaceExecutionStates: false,
           ),
         ],
       );
-      if (result == true) {
+      if (result == true && mounted) {
         // ignore: unawaited_futures
         Navigator.of(context).push(
           MaterialPageRoute(
@@ -148,6 +153,9 @@ class _PasswordReentryPageState extends State<PasswordReentryPage> {
     } catch (e, s) {
       _logger.severe("Password verification failed", e, s);
       await dialog.hide();
+      if (!mounted) {
+        return;
+      }
 
       final result = await showAlertBottomSheet<bool>(
         context,
@@ -155,31 +163,34 @@ class _PasswordReentryPageState extends State<PasswordReentryPage> {
         message: context.strings.pleaseTryAgain,
         assetPath: 'assets/warning-grey.png',
         buttons: [
-          GradientButton(
-            text: context.strings.contactSupport,
+          ButtonComponent(
+            label: context.strings.contactSupport,
             onTap: () {
               Navigator.of(context).pop(true);
             },
+            shouldSurfaceExecutionStates: false,
           ),
         ],
       );
-      if (result == true) {
+      if (result == true && mounted) {
         await sendLogs(context, "support@ente.com", postShare: () {});
       }
       return;
     }
     widget.config.resetVolatilePassword();
     await dialog.hide();
-    unawaited(
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(
-          builder: (BuildContext context) {
-            return widget.homePage;
-          },
+    if (mounted) {
+      unawaited(
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(
+            builder: (BuildContext context) {
+              return widget.homePage;
+            },
+          ),
+          (route) => false,
         ),
-        (route) => false,
-      ),
-    );
+      );
+    }
   }
 
   Future<void> _registerSRPForExistingUsers(Uint8List key) async {
@@ -226,8 +237,7 @@ class _PasswordReentryPageState extends State<PasswordReentryPage> {
                       ),
                       const SizedBox(height: 8),
                       Visibility(
-                        // hidden textForm for suggesting auto-fill service for saving
-                        // password
+                        // Prompts platform password saving.
                         visible: false,
                         child: TextFormField(
                           autofillHints: const [AutofillHints.email],
@@ -321,9 +331,11 @@ class _PasswordReentryPageState extends State<PasswordReentryPage> {
                               await dialog.show();
                               await widget.config.logout();
                               await dialog.hide();
-                              Navigator.of(
-                                context,
-                              ).popUntil((route) => route.isFirst);
+                              if (mounted) {
+                                Navigator.of(
+                                  context,
+                                ).popUntil((route) => route.isFirst);
+                              }
                             },
                             child: Text(
                               context.strings.changeEmail,

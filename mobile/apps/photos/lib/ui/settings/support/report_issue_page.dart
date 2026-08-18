@@ -1,10 +1,11 @@
 import "package:ente_components/ente_components.dart";
+import "package:ente_strings/ente_strings.dart";
 import "package:flutter/material.dart";
+import "package:flutter/services.dart";
+import "package:hugeicons/hugeicons.dart";
 import "package:logging/logging.dart";
 import "package:photos/core/constants.dart";
-import "package:photos/generated/l10n.dart";
 import "package:photos/ui/notification/toast.dart";
-import "package:photos/ui/settings/components/settings_page_scaffold.dart";
 import "package:photos/ui/settings/support/no_mail_app_sheet.dart";
 import "package:photos/utils/email_util.dart";
 
@@ -31,7 +32,17 @@ class _ReportIssuePageState extends State<ReportIssuePage> {
 
   @override
   Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context);
+    final l10n = context.strings;
+    final colors = context.componentColors;
+    final subjectHasText = _subjectController.text.isNotEmpty;
+    final descriptionHasText = _descriptionController.text.isNotEmpty;
+
+    Widget copyIcon() => HugeIcon(
+      icon: HugeIcons.strokeRoundedCopy01,
+      size: IconSizes.small,
+      color: colors.textLighter,
+      strokeWidth: 1.6,
+    );
 
     return SettingsPageScaffold(
       title: l10n.reportAnIssue,
@@ -52,8 +63,12 @@ class _ReportIssuePageState extends State<ReportIssuePage> {
           hintText: l10n.oneLineAboutTheIssue,
           controller: _subjectController,
           textCapitalization: TextCapitalization.sentences,
-          isClearable: true,
           maxLines: 1,
+          onChanged: (_) => setState(() {}),
+          suffix: subjectHasText ? copyIcon() : null,
+          onSuffixTap: subjectHasText
+              ? () => _copyToClipboard(_subjectController.text)
+              : null,
         ),
         const SizedBox(height: 16),
         TextInputComponent(
@@ -63,6 +78,11 @@ class _ReportIssuePageState extends State<ReportIssuePage> {
           textCapitalization: TextCapitalization.sentences,
           maxLines: 6,
           minLines: 6,
+          onChanged: (_) => setState(() {}),
+          suffix: descriptionHasText ? copyIcon() : null,
+          onSuffixTap: descriptionHasText
+              ? () => _copyToClipboard(_descriptionController.text)
+              : null,
         ),
         const SizedBox(height: 16),
         MenuComponent(
@@ -83,11 +103,18 @@ class _ReportIssuePageState extends State<ReportIssuePage> {
     );
   }
 
+  Future<void> _copyToClipboard(String text) async {
+    await Clipboard.setData(ClipboardData(text: text));
+    if (mounted) {
+      showShortToast(context, context.strings.copied);
+    }
+  }
+
   Future<void> _onSend() async {
     if (_isSending) {
       return;
     }
-    final l10n = AppLocalizations.of(context);
+    final l10n = context.strings;
     final subject = _subjectController.text.trim();
     final description = _descriptionController.text.trim();
     if (subject.isEmpty) {
@@ -115,24 +142,36 @@ class _ReportIssuePageState extends State<ReportIssuePage> {
       );
 
       if (_attachLogs) {
-        logsZipFilePath = await getZippedLogsFile(context);
+        if (!mounted) return;
+        logsZipFilePath = await getZippedLogsFile(
+          context,
+          reportText: buildSupportReportText(
+            to: recipientEmail,
+            subject: subject,
+            body: body,
+          ),
+        );
         logsLabel = l10n.export;
       }
 
-      final didOpenComposer = _attachLogs
-          ? await sendLogsWithSubjectAndBody(
-              context,
-              toEmail: recipientEmail,
-              subject: subject,
-              body: body,
-              zipFilePath: logsZipFilePath,
-            )
-          : await sendComposedEmail(
-              context,
-              to: recipientEmail,
-              subject: subject,
-              body: body,
-            );
+      late final bool didOpenComposer;
+      if (_attachLogs) {
+        if (!mounted) return;
+        didOpenComposer = await sendLogsWithSubjectAndBody(
+          context,
+          toEmail: recipientEmail,
+          subject: subject,
+          body: body,
+          zipFilePath: logsZipFilePath,
+        );
+      } else {
+        if (!mounted) return;
+        didOpenComposer = await sendComposedEmail(
+          to: recipientEmail,
+          subject: subject,
+          body: body,
+        );
+      }
 
       if (didOpenComposer && mounted) {
         Navigator.of(context).pop();

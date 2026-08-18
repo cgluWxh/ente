@@ -73,17 +73,17 @@ If running Museum without Docker, the code should be visible in the terminal (st
 
 4.  Restart Museum by restarting the cluster
 
-::: tip Restart your Compose clusters whenever you make changes
-
-If you have edited the Compose file or configuration file (`museum.yaml`), make sure to recreate the cluster's containers.
-
-You can do this by the following command:
-
-```sh
-docker compose down && docker compose up -d
-```
-
-:::
+> [!TIP]
+>
+> Restart your Compose clusters whenever you make changes.
+>
+> If you have edited the Compose file or configuration file (`museum.yaml`), make sure to recreate the cluster's containers.
+>
+> You can do this by the following command:
+>
+> ```sh
+> docker compose down && docker compose up -d
+> ```
 
 ## Step 3: Configure application endpoints
 
@@ -101,9 +101,10 @@ apps:
     cast: https://cast.ente.yourdomain.tld
     embed-albums: https://embed.ente.yourdomain.tld
     accounts: https://accounts.ente.yourdomain.tld
+    legacy: https://legacy.ente.yourdomain.tld
 ```
 
-If you are using quickstart, note that only Photos and Albums are exposed by default in `compose.yaml`. Uncomment the Share / Paste / Memories port mappings there, or deploy them separately, before pointing `apps.public-locker` / `apps.public-paste` / `apps.public-memories` to those URLs.
+If you are using quickstart, note that only Photos and Albums are exposed by default in `compose.yaml`. Uncomment the port mappings of the other apps there, or deploy them separately, before pointing their `apps.*` keys to those URLs.
 
 ## Step 4: Make it publicly accessible
 
@@ -136,7 +137,9 @@ The browser blocks these requests unless CORS is properly configured.
 
 Learn more about [configuring CORS for object storage](/self-hosting/administration/object-storage#cors-cross-origin-resource-sharing).
 
-> **Note**: This challenge is unrelated to the local storage path configuration (MinIO volumes in compose.yaml). It's specifically about browser security when accessing object storage over the network.
+> [!NOTE]
+>
+> This challenge is unrelated to the local storage path configuration (MinIO volumes in compose.yaml). It's specifically about browser security when accessing object storage over the network.
 
 ## Step 5: Download mobile and desktop app
 
@@ -170,12 +173,12 @@ apps](web-dev-settings.png){width=400px}
 
 ## Step 7: Configure Ente CLI
 
-You can download Ente CLI from [here](https://github.com/ente-io/ente/releases?q=tag%3Acli).
+You can download Ente CLI from [here](https://github.com/ente/ente/releases?q=tag%3Acli).
 
 Check our [documentation](/self-hosting/administration/cli) on how to use Ente CLI for managing self-hosted instances.
 
-::: info For upgrading
-
-Check out our [upgrading documentation](/self-hosting/installation/upgrade) for various installation methods.
-
-:::
+> [!NOTE]
+>
+> **For upgrading**
+>
+> Check out our [upgrading documentation](/self-hosting/installation/upgrade) for various installation methods.

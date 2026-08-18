@@ -9,28 +9,28 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
 	"golang.org/x/net/idna"
 
-	"github.com/ente-io/museum/pkg/repo/remotestore"
+	"github.com/ente/museum/pkg/repo/remotestore"
 	"github.com/gin-contrib/requestid"
 	"github.com/spf13/viper"
 
-	public2 "github.com/ente-io/museum/pkg/controller/public"
-	"github.com/ente-io/museum/pkg/repo/public"
-	socialrepo "github.com/ente-io/museum/pkg/repo/social"
+	public2 "github.com/ente/museum/pkg/controller/public"
+	"github.com/ente/museum/pkg/repo/public"
+	socialrepo "github.com/ente/museum/pkg/repo/social"
 
-	"github.com/ente-io/museum/ente"
-	"github.com/ente-io/museum/pkg/controller"
-	"github.com/ente-io/museum/pkg/controller/discord"
-	"github.com/ente-io/museum/pkg/repo"
-	"github.com/ente-io/museum/pkg/utils/array"
-	"github.com/ente-io/museum/pkg/utils/auth"
-	"github.com/ente-io/museum/pkg/utils/network"
-	"github.com/ente-io/museum/pkg/utils/time"
-	"github.com/ente-io/stacktrace"
+	"github.com/ente/museum/ente"
+	"github.com/ente/museum/pkg/controller"
+	"github.com/ente/museum/pkg/controller/discord"
+	"github.com/ente/museum/pkg/repo"
+	"github.com/ente/museum/pkg/utils/auth"
+	"github.com/ente/museum/pkg/utils/network"
+	"github.com/ente/museum/pkg/utils/time"
+	"github.com/ente/stacktrace"
 	"github.com/gin-gonic/gin"
 	"github.com/patrickmn/go-cache"
 	"github.com/sirupsen/logrus"
@@ -38,7 +38,6 @@ import (
 
 var passwordWhiteListedURLs = []string{"/public-collection/info", "/public-collection/verify-password"}
 
-// CollectionLinkMiddleware intercepts and authenticates incoming requests
 type CollectionLinkMiddleware struct {
 	CollectionLinkRepo   *public.CollectionLinkRepo
 	PublicCollectionCtrl *public2.CollectionLinkController
@@ -51,9 +50,6 @@ type CollectionLinkMiddleware struct {
 	AnonIdentitySecret   []byte
 }
 
-// Authenticate returns a middle ware that extracts the `X-Auth-Access-Token`
-// within the header of a request and uses it to validate the access token and set the
-// ente.PublicAccessContext with auth.PublicAccessKey as key
 func (m *CollectionLinkMiddleware) Authenticate(urlSanitizer func(_ *gin.Context) string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		accessToken := auth.GetAccessToken(c)
@@ -69,7 +65,7 @@ func (m *CollectionLinkMiddleware) Authenticate(urlSanitizer func(_ *gin.Context
 		shouldCheckDeviceLimit := shouldCheckCollectionLinkDeviceLimit(reqPath)
 		passwordValidated := false
 
-		cacheKey := computeHashKeyForList([]string{accessToken, clientIP, userAgent}, ":")
+		cacheKey := computeHashKeyForList([]string{accessToken, clientIP, userAgent, c.GetHeader("Origin")}, ":")
 		var cachedValue interface{}
 		cacheHit := false
 		if !shouldCheckDeviceLimit {
@@ -85,14 +81,12 @@ func (m *CollectionLinkMiddleware) Authenticate(urlSanitizer func(_ *gin.Context
 				c.AbortWithStatusJSON(http.StatusGone, gin.H{"error": "disabled token"})
 				return
 			}
-			// validate if user still has active paid subscription
 			isFreeUser, err := m.validateOwnersSubscription(c, publicCollectionSummary.CollectionID)
 			if err != nil {
 				logrus.WithError(err).Warn("failed to verify active paid subscription")
 				c.AbortWithStatusJSON(http.StatusGone, gin.H{"error": "no active subscription"})
 				return
 			}
-			// Override device limit to 5 for free users
 			if isFreeUser {
 				publicCollectionSummary.DeviceLimit = public2.FreeUserDeviceLimit
 			}
@@ -139,7 +133,6 @@ func (m *CollectionLinkMiddleware) Authenticate(urlSanitizer func(_ *gin.Context
 			return
 		}
 
-		// checks password protected public collection
 		if !passwordValidated && publicCollectionSummary.PassHash != nil && *publicCollectionSummary.PassHash != "" {
 			if err = m.validatePassword(c, reqPath, publicCollectionSummary); err != nil {
 				logrus.WithError(err).Warn("password validation failed")
@@ -209,8 +202,6 @@ func shouldCheckCollectionLinkDeviceLimit(reqPath string) bool {
 		reqPath == "/public-collection/diff"
 }
 
-// validateOwnersSubscription checks if the owner has an active subscription.
-// Returns (isFreeUser, error) where isFreeUser is true if user is on free plan but has active subscription.
 func (m *CollectionLinkMiddleware) validateOwnersSubscription(c *gin.Context, cID int64) (bool, error) {
 	userID, err := m.CollectionRepo.GetOwnerID(cID)
 	if err != nil {
@@ -224,7 +215,6 @@ func (m *CollectionLinkMiddleware) validateOwnersSubscription(c *gin.Context, cI
 			return false, stacktrace.Propagate(err, "failed to validate owners subscription")
 		}
 		isFreeUser = true
-		// Free user - check if they have active subscription (not expired)
 		if err = m.BillingCtrl.HasActiveSelfOrFamilySubscription(userID, false); err != nil {
 			return false, stacktrace.Propagate(err, "failed to validate owners subscription")
 		}
@@ -272,13 +262,12 @@ func (m *CollectionLinkMiddleware) isDeviceLimitReached(ctx context.Context,
 	return false, stacktrace.Propagate(err, "failed to record access history")
 }
 
-// validatePassword will verify if the user is provided correct password for the public album
 func (m *CollectionLinkMiddleware) validatePassword(c *gin.Context, reqPath string,
 	collectionSummary ente.PublicCollectionSummary) error {
 	// /public-collection/info is allowed before password unlock so clients can
 	// fetch the KDF parameters needed to verify the password. Device-limit
 	// admission is intentionally still applied to this public entrypoint.
-	if array.StringInList(reqPath, passwordWhiteListedURLs) {
+	if slices.Contains(passwordWhiteListedURLs, reqPath) {
 		return nil
 	}
 	accessTokenJWT := auth.GetAccessTokenJWT(c)
@@ -299,7 +288,7 @@ func (m *CollectionLinkMiddleware) validateOrigin(c *gin.Context, ownerID int64)
 		// origin to embed.ente.com. Custom embed origins should not inherit this.
 		(embedAlbumsOrigin == "https://embed.ente.com" && origin == "https://embed.ente.io") ||
 		origin == viper.GetString("apps.public-locker") ||
-		strings.HasPrefix(strings.ToLower(origin), "http://localhost:") {
+		network.IsLoopbackOrigin(origin) {
 		return nil
 	}
 	reqId := requestid.Get(c)
@@ -312,7 +301,6 @@ func (m *CollectionLinkMiddleware) validateOrigin(c *gin.Context, ownerID int64)
 	domain, err := m.RemoteStoreRepo.GetEffectiveDomain(c, ownerID)
 	if err != nil {
 		logger.WithError(err).Error("domainFetchFailed")
-		m.DiscordController.NotifyPotentialAbuse(alertMessage + " - domainFetchFailed")
 		return nil
 	}
 	if domain == nil || *domain == "" {
@@ -322,28 +310,18 @@ func (m *CollectionLinkMiddleware) validateOrigin(c *gin.Context, ownerID int64)
 	parse, err := url.Parse(origin)
 	if err != nil {
 		logger.WithError(err).Error("originParseFailedL")
-		m.DiscordController.NotifyPotentialAbuse(alertMessage + " - originParseFailed")
-		return nil
-	}
-	unicodeDomain, err := idna.ToUnicode(*domain)
-	if err != nil {
-		logger.WithError(err).Error("domainToUnicodeFailed")
-		m.DiscordController.NotifyPotentialAbuse(alertMessage + " - domainToUnicodeFailed")
-		return nil
-	}
-
-	if !strings.Contains(strings.ToLower(parse.Host), strings.ToLower(*domain)) && !strings.Contains(strings.ToLower(parse.Host), strings.ToLower(unicodeDomain)) {
-		logger.Warnf("domainMismatch: domain %s (unicode %s) vs originHost %s", *domain, unicodeDomain, parse.Host)
-		m.DiscordController.NotifyPotentialAbuse(alertMessage + " - domainMismatch")
 		return ente.NewPermissionDeniedError("unknown custom domain")
 	}
-	// Additional exact match check. In the future, remove the contains check above and only keep this exact match check.
-	if !strings.EqualFold(parse.Host, *domain) && !strings.EqualFold(parse.Host, unicodeDomain) {
-		logger.Warnf("exactDomainMismatch: domain %s (unicode %s) vs originHost %s", *domain, unicodeDomain, parse.Host)
-		m.DiscordController.NotifyPotentialAbuse(alertMessage + " - exactDomainMismatch")
-		// Do not return error here till we are fully sure that this won't cause any issues for existing
-		// custom domains.
-		// return ente.NewPermissionDeniedError("unknown custom domain")
+	asciiDomain, err := idna.ToASCII(*domain)
+	if err != nil {
+		logger.WithError(err).Error("domainToASCIIFailed")
+		m.DiscordController.NotifyPotentialAbuse(alertMessage + " - domainToASCIIFailed")
+		return ente.NewPermissionDeniedError("unknown custom domain")
+	}
+	if !strings.EqualFold(parse.Hostname(), asciiDomain) {
+		logger.Warnf("domainMismatch: domain %s (ascii %s) vs originHost %s", *domain, asciiDomain, parse.Hostname())
+		m.DiscordController.NotifyPotentialAbuse(alertMessage + " - domainMismatch")
+		return ente.NewPermissionDeniedError("unknown custom domain")
 	}
 	return nil
 }

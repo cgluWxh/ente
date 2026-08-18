@@ -1,3 +1,6 @@
+// Each integration test compiles this shared support module separately.
+#![allow(dead_code)]
+
 use std::{
     io::Write,
     path::{Path, PathBuf},

@@ -34,7 +34,7 @@ import type {
 } from "@/types";
 import { getItemTitle, isCollectionOwner } from "@/types";
 import { Box } from "@mui/material";
-import { savedLocalUser } from "ente-accounts-rs/services/accounts-db";
+import { savedLocalUser } from "ente-accounts/services/accounts-db";
 import type { MiniDialogAttributes } from "ente-base/components/MiniDialog";
 import log from "ente-base/log";
 import { t } from "i18next";
@@ -555,13 +555,14 @@ export const useLockerActions = ({
                 message: (
                     <Trans
                         i18nKey="deleteFileConfirmation"
-                        values={{ fileName: getItemTitle(item) }}
                         components={{
-                            strong: (
+                            fileName: (
                                 <Box
                                     component="span"
                                     sx={{ fontWeight: 700, color: "text.base" }}
-                                />
+                                >
+                                    {getItemTitle(item)}
+                                </Box>
                             ),
                         }}
                     />

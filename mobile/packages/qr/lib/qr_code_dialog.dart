@@ -121,6 +121,9 @@ class _QrCodeDialogState extends State<QrCodeDialog> {
       final directory = await getTemporaryDirectory();
       final file = File('${directory.path}/${widget.shareFileName}');
       await file.writeAsBytes(pngBytes);
+      if (!mounted) {
+        return;
+      }
 
       final box = context.findRenderObject() as RenderBox?;
       final shareOrigin = box != null
@@ -199,7 +202,7 @@ class _QrCodeDialogState extends State<QrCodeDialog> {
       widget.maxQrSize,
     );
     final double qrCodeSize = max(qrSize - 100, widget.minQrSize);
-    // Round to nearest even number for crisp rendering
+    // Even dimensions render the QR code sharply.
     final double qrCodeSizeEven = (qrCodeSize / 2).round() * 2.0;
 
     final dialogBackgroundColor =
@@ -215,7 +218,6 @@ class _QrCodeDialogState extends State<QrCodeDialog> {
     final shareButtonColor =
         widget.shareButtonBackgroundColor ?? widget.accentColor;
 
-    // Use theme text styles with copyWith for customization
     final titleStyle =
         widget.titleTextStyle ??
         textTheme.titleMedium?.copyWith(

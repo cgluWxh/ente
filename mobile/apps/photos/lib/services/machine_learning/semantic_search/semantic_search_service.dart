@@ -11,13 +11,11 @@ import "package:photos/db/offline_files_db.dart";
 import 'package:photos/events/embedding_updated_event.dart';
 import "package:photos/models/file/file.dart";
 import "package:photos/models/ml/clip.dart";
-import "package:photos/models/ml/face/dimension.dart";
 import "package:photos/models/ml/ml_versions.dart";
 import "package:photos/service_locator.dart";
 import "package:photos/services/collections_service.dart";
 import "package:photos/services/machine_learning/ml_computer.dart";
 import "package:photos/services/machine_learning/ml_result.dart";
-import "package:photos/services/machine_learning/semantic_search/clip/clip_image_encoder.dart";
 import "package:photos/services/machine_learning/semantic_search/query_result.dart";
 import "package:photos/services/search_service.dart";
 import "package:shared_preferences/shared_preferences.dart";
@@ -131,8 +129,8 @@ class SemanticSearchService {
     }
   }
 
-  // searchScreenQuery should only be used for the user initiate query on the search screen.
-  // If there are multiple call tho this method, then for all the calls, the result will be the same as the last query.
+  // Use only for interactive search. Concurrent calls all resolve with the
+  // latest query's results.
   Future<(String, List<EnteFile>)> searchScreenQuery(String query) async {
     if (!isMagicSearchEnabledAndReady()) {
       if (flagService.internalUser) {
@@ -142,20 +140,15 @@ class SemanticSearchService {
       }
       return (query, <EnteFile>[]);
     }
-    // If there's an ongoing request, just update the last query and return its future.
     if (_searchScreenRequest != null) {
       _latestPendingQuery = query;
       return _searchScreenRequest!;
     } else {
-      // No ongoing request, start a new search.
       _searchScreenRequest = getMatchingFiles(query).then((result) {
-        // Search completed, reset the ongoing request.
         _searchScreenRequest = null;
-        // If there was a new query during the last search, start a new search with the last query.
         if (_latestPendingQuery != null) {
           final String newQuery = _latestPendingQuery!;
-          _latestPendingQuery = null; // Reset last query.
-          // Recursively call search with the latest query.
+          _latestPendingQuery = null;
           return searchScreenQuery(newQuery);
         }
         return (query, result);
@@ -206,7 +199,6 @@ class SemanticSearchService {
     double? similarityThreshold,
   }) async {
     bool showThreshold = false;
-    // if the query starts with 0.xxx, the split the query to get score threshold and actual query
     if (query.startsWith(RegExp(r"0\.\d+"))) {
       final parts = query.split(" ");
       if (parts.length > 1) {
@@ -224,14 +216,6 @@ class SemanticSearchService {
       minimumSimilarityMap: {query: minimumSimilarity},
     );
     final queryResults = similarityResults[query] ?? <QueryResult>[];
-    // Uncomment if needed for debugging: print query for top ten scores
-    // if (kDebugMode) {
-    //   for (int i = 0; i < min(10, queryResults.length); i++) {
-    //     final result = queryResults[i];
-    //     dev.log("Query: $query, Score: ${result.score}, index $i");
-    //   }
-    // }
-
     final Map<int, double> fileIDToScoreMap = {};
     for (final result in queryResults) {
       fileIDToScoreMap[result.id] = result.score;
@@ -321,10 +305,8 @@ class SemanticSearchService {
     return results;
   }
 
-  /// Get matching file IDs for common repeated queries like smart memories and magic cache.
-  /// WARNING: Use this method carefully - it uses persistent caching which is only
-  /// beneficial for queries that are repeated across app sessions.
-  /// For regular user searches, use getMatchingFiles instead.
+  // The persistent cache is only useful for queries repeated across app
+  // sessions. Use getMatchingFiles for user searches.
   Future<Map<String, List<int>>> getMatchingFileIDsForCommonQueries(
     Map<String, double> queryToScore,
   ) async {
@@ -334,7 +316,6 @@ class SemanticSearchService {
     for (final entry in queryToScore.entries) {
       final query = entry.key;
       final score = entry.value;
-      // Use cache service instead of _getTextEmbedding
       final textEmbedding = await textEmbeddingsCacheService.getEmbedding(
         query,
       );
@@ -403,13 +384,6 @@ class SemanticSearchService {
     required Map<String, double> minimumSimilarityMap,
     int? maxResults,
   }) async {
-    // Uncomment if needed for debugging: print query embeddings
-    // if (kDebugMode) {
-    //   for (final queryText in textQueryToEmbeddingMap.keys) {
-    //     final embedding = textQueryToEmbeddingMap[queryText]!;
-    //     dev.log("CLIPTEXT Query: $queryText, embedding: $embedding");
-    //   }
-    // }
     if (await _canUseVectorDbForSearch()) {
       final startTime = DateTime.now();
       try {
@@ -522,23 +496,5 @@ class SemanticSearchService {
         _imageEmbeddingsAreCached = false;
       }
     });
-  }
-
-  static Future<ClipResult> runClipImage(
-    int enteFileID,
-    Dimensions dimensions,
-    Uint8List rawRgbaBytes,
-    int clipImageAddress,
-  ) async {
-    final embedding = await ClipImageEncoder.predict(
-      dimensions,
-      rawRgbaBytes,
-      clipImageAddress,
-      enteFileID,
-    );
-
-    final clipResult = ClipResult(fileID: enteFileID, embedding: embedding);
-
-    return clipResult;
   }
 }

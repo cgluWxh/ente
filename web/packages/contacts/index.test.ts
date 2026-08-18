@@ -92,7 +92,7 @@ const setupContactsModule = async (options: SetupOptions = {}) => {
         return typeof value === "number" ? value : undefined;
     });
 
-    const savedAuthToken = vi.fn(() => "auth-token-secret");
+    const savedAuthToken = vi.fn((): string | undefined => "auth-token-secret");
     const apiOrigin = vi.fn(() => "https://api.example");
     const info = vi.fn();
     const warn = vi.fn();
@@ -147,11 +147,14 @@ const setupContactsModule = async (options: SetupOptions = {}) => {
     vi.doMock("ente-base/kv", () => ({ getKV, getKVN, setKV }));
     vi.doMock("ente-base/token", () => ({ savedAuthToken }));
     vi.doMock("ente-base/origins", () => ({ apiOrigin }));
-    vi.doMock("ente-base/log", () => ({ default: { info, warn, error } }));
-    vi.doMock("ente-accounts-rs/services/session-storage", () => ({
+    vi.doMock("ente-base/log", () => ({
+        default: { info, warn, error },
+        logToDisk: vi.fn(),
+    }));
+    vi.doMock("ente-accounts/services/session-storage", () => ({
         masterKeyFromSession: vi.fn(() => "MASTER_KEY"),
     }));
-    vi.doMock("ente-accounts-rs/services/user", () => ({
+    vi.doMock("ente-accounts/services/user", () => ({
         ensureLocalUser: vi.fn(() => ({ id: 101 })),
     }));
     vi.doMock("ente-base/app", () => ({
@@ -186,6 +189,8 @@ const setupContactsModule = async (options: SetupOptions = {}) => {
     return {
         contacts,
         setKV,
+        savedAuthToken,
+        update_auth_token,
         get_diff,
         get_profile_picture,
         legacy_get_info,
@@ -304,7 +309,7 @@ describe("profile picture loading", () => {
 });
 
 describe("retry after warm-up failure", () => {
-    test("retries with the last ready input after a transient failure", async () => {
+    test("recovers from a transient failure with bounded background retry", async () => {
         vi.useFakeTimers();
         const { contacts, get_diff } = await setupContactsModule();
         get_diff.mockReset();
@@ -323,15 +328,76 @@ describe("retry after warm-up failure", () => {
             ])
             .mockResolvedValueOnce([]);
 
-        await expect(
+        const ready = contacts.ensureContactsReady({
+            userID: 101,
+            masterKeyB64: "ignored",
+        });
+        await vi.advanceTimersByTimeAsync(10_001);
+        await expect(ready).resolves.toBeUndefined();
+
+        expect(get_diff).toHaveBeenCalledTimes(3);
+    });
+
+    test("stops after bounded background retries keep failing", async () => {
+        vi.useFakeTimers();
+        const { contacts, get_diff } = await setupContactsModule();
+        get_diff.mockReset();
+        get_diff.mockRejectedValue(new Error("down"));
+
+        const ready = expect(
             contacts.ensureContactsReady({
                 userID: 101,
                 masterKeyB64: "ignored",
             }),
-        ).rejects.toThrow("transient");
-        await vi.advanceTimersByTimeAsync(5_001);
+        ).rejects.toThrow("down");
 
-        expect(get_diff).toHaveBeenCalledTimes(3);
+        await vi.advanceTimersByTimeAsync(10_001);
+        await vi.advanceTimersByTimeAsync(30_001);
+        await vi.advanceTimersByTimeAsync(120_001);
+        await ready;
+
+        expect(get_diff).toHaveBeenCalledTimes(4);
+        await vi.advanceTimersByTimeAsync(300_000);
+        expect(get_diff).toHaveBeenCalledTimes(4);
+    });
+
+    test("stale retry does not update a newer generation context token", async () => {
+        vi.useFakeTimers();
+        const { contacts, savedAuthToken, update_auth_token, get_diff } =
+            await setupContactsModule();
+        savedAuthToken
+            .mockReturnValueOnce("old-token")
+            .mockReturnValueOnce(undefined)
+            .mockReturnValue("new-token");
+        get_diff.mockReset();
+        get_diff
+            .mockRejectedValueOnce(new Error("transient"))
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([]);
+
+        const staleReady = contacts.ensureContactsReady({
+            userID: 101,
+            masterKeyB64: "old-master-key",
+        });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(get_diff).toHaveBeenCalledTimes(1);
+
+        await contacts.ensureContactsReady({
+            userID: 101,
+            masterKeyB64: "clearing-master-key",
+        });
+        expect(get_diff).toHaveBeenCalledTimes(1);
+
+        await contacts.ensureContactsReady({
+            userID: 101,
+            masterKeyB64: "new-master-key",
+        });
+        expect(get_diff).toHaveBeenCalledTimes(2);
+
+        await vi.advanceTimersByTimeAsync(10_001);
+        await expect(staleReady).resolves.toBeUndefined();
+        expect(update_auth_token).not.toHaveBeenCalled();
+        expect(get_diff).toHaveBeenCalledTimes(2);
     });
 });
 

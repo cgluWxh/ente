@@ -94,7 +94,6 @@ class SocialDB {
       )
     ''');
 
-    // Create indexes for common queries
     await db.execute(
       'CREATE INDEX idx_comments_file_collection ON $_commentsTable(file_id, collection_id)',
     );
@@ -102,8 +101,6 @@ class SocialDB {
       'CREATE INDEX idx_reactions_file_collection ON $_reactionsTable(file_id, collection_id)',
     );
   }
-
-  // ============ Comment Methods ============
 
   Future<void> addComment(Comment comment) async {
     final db = await database;
@@ -153,12 +150,47 @@ class SocialDB {
     return rows.map(_rowToComment).toList();
   }
 
-  Future<int> getCommentCountForFile(int fileID) async {
+  // Candidate collections let the file/collection index narrow this lookup.
+  Future<Comment?> getLatestCommentForFile(
+    int fileID, {
+    required List<int> candidateCollectionIDs,
+  }) async {
+    if (candidateCollectionIDs.isEmpty) {
+      return null;
+    }
+
+    final placeholders = List.filled(
+      candidateCollectionIDs.length,
+      '?',
+    ).join(',');
+    final db = await database;
+    final rows = await db.query(
+      _commentsTable,
+      where:
+          'file_id = ? AND is_deleted = 0 '
+          'AND collection_id IN ($placeholders)',
+      whereArgs: [fileID, ...candidateCollectionIDs],
+      orderBy: 'created_at DESC',
+      limit: 1,
+    );
+    return rows.isEmpty ? null : _rowToComment(rows.first);
+  }
+
+  Future<int> getCommentCountForFileInCollections(
+    int fileID,
+    List<int> collectionIDs,
+  ) async {
+    if (collectionIDs.isEmpty) {
+      return 0;
+    }
+
+    final placeholders = List.filled(collectionIDs.length, '?').join(',');
     final db = await database;
     final result = await db.rawQuery(
       'SELECT COUNT(*) as count FROM $_commentsTable '
-      'WHERE file_id = ? AND is_deleted = 0',
-      [fileID],
+      'WHERE file_id = ? AND collection_id IN ($placeholders) '
+      'AND is_deleted = 0',
+      [fileID, ...collectionIDs],
     );
     return Sqflite.firstIntValue(result) ?? 0;
   }
@@ -257,8 +289,6 @@ class SocialDB {
     return rows.map(_rowToComment).toList();
   }
 
-  // ============ Reaction Methods ============
-
   Future<List<Reaction>> getReactionsForFile(int fileID) async {
     final db = await database;
     final rows = await db.query(
@@ -267,6 +297,30 @@ class SocialDB {
       whereArgs: [fileID],
     );
     return rows.map(_rowToReaction).toList();
+  }
+
+  Future<bool> hasUserReactedToFileInCollections(
+    int fileID,
+    int userID,
+    List<int> collectionIDs,
+  ) async {
+    if (collectionIDs.isEmpty) {
+      return false;
+    }
+
+    final placeholders = List.filled(collectionIDs.length, '?').join(',');
+    final db = await database;
+    final rows = await db.rawQuery(
+      '''
+      SELECT 1 FROM $_reactionsTable
+      WHERE file_id = ? AND user_id = ?
+        AND collection_id IN ($placeholders)
+        AND comment_id IS NULL AND is_deleted = 0
+      LIMIT 1
+      ''',
+      [fileID, userID, ...collectionIDs],
+    );
+    return rows.isNotEmpty;
   }
 
   Future<List<Reaction>> getReactionsForFileInCollection(
@@ -303,8 +357,6 @@ class SocialDB {
     );
     return rows.map(_rowToReaction).toList();
   }
-
-  // ============ Sync Time Methods ============
 
   Future<int> getCommentsSyncTime(int collectionID) async {
     final db = await database;
@@ -366,7 +418,6 @@ class SocialDB {
 
   Future<void> setAnonProfilesSyncTime(int collectionID, int syncTime) async {
     final db = await database;
-    // First check if the row exists
     final rows = await db.query(
       _syncTimeTable,
       where: 'collection_id = ?',
@@ -387,8 +438,6 @@ class SocialDB {
     }
   }
 
-  // ============ Bulk Upsert Methods ============
-
   Future<void> upsertComments(List<Comment> comments) async {
     if (comments.isEmpty) return;
     final db = await database;
@@ -403,9 +452,6 @@ class SocialDB {
     await batch.commit(noResult: true);
   }
 
-  /// Resolves `parent_comment_user_id` for reply comments by looking up the
-  /// parent comment's `user_id`. Only processes rows where the field is still
-  /// NULL, making it idempotent.
   Future<void> resolveParentCommentUserIDs(int collectionID) async {
     final db = await database;
     await db.rawUpdate(
@@ -435,8 +481,6 @@ class SocialDB {
     }
     await batch.commit(noResult: true);
   }
-
-  // ============ Anon Profile Methods ============
 
   Future<void> upsertAnonProfiles(List<AnonProfile> profiles) async {
     if (profiles.isEmpty) return;
@@ -478,10 +522,6 @@ class SocialDB {
     return _rowToAnonProfile(rows.first);
   }
 
-  // ============ Feed Query Methods ============
-
-  /// Gets all reactions on files (photo likes) excluding the current user's reactions.
-  /// Returns reactions sorted by created_at DESC.
   Future<List<Reaction>> getReactionsOnFiles({
     required int excludeUserID,
     int limit = 100,
@@ -500,8 +540,6 @@ class SocialDB {
     return rows.map(_rowToReaction).toList();
   }
 
-  /// Gets all comments on files excluding the current user's comments.
-  /// Returns comments sorted by created_at DESC.
   Future<List<Comment>> getCommentsOnFiles({
     required int excludeUserID,
     int limit = 100,
@@ -520,15 +558,12 @@ class SocialDB {
     return rows.map(_rowToComment).toList();
   }
 
-  /// Gets all replies to comments, excluding the current user's own replies.
-  /// Returns replies sorted by created_at DESC.
   Future<List<Comment>> getReplies({
     required int excludeUserID,
     int limit = 100,
     int offset = 0,
   }) async {
     final db = await database;
-    // Get all replies excluding the current user's own replies
     final rows = await db.query(
       _commentsTable,
       where:
@@ -541,16 +576,12 @@ class SocialDB {
     return rows.map(_rowToComment).toList();
   }
 
-  /// Gets all reactions on top-level comments, excluding the current user's reactions.
-  /// Returns reactions sorted by created_at DESC.
   Future<List<Reaction>> getReactionsOnUserComments({
     required int targetUserID,
     int limit = 100,
     int offset = 0,
   }) async {
     final db = await database;
-    // Get all reactions on comments (not on files) excluding current user's
-    // Join to ensure we only get reactions on top-level comments (not replies)
     final rows = await db.rawQuery(
       '''
       SELECT r.* FROM $_reactionsTable r
@@ -565,15 +596,12 @@ class SocialDB {
     return rows.map(_rowToReaction).toList();
   }
 
-  /// Gets all reactions on replies, excluding the current user's reactions.
-  /// Returns reactions sorted by created_at DESC.
   Future<List<Reaction>> getReactionsOnUserReplies({
     required int targetUserID,
     int limit = 100,
     int offset = 0,
   }) async {
     final db = await database;
-    // Get all reactions on replies excluding current user's
     final rows = await db.rawQuery(
       '''
       SELECT r.* FROM $_reactionsTable r
@@ -588,8 +616,6 @@ class SocialDB {
     return rows.map(_rowToReaction).toList();
   }
 
-  /// Gets all reactions on files after [sinceTime], excluding the current user.
-  /// Returns reactions sorted by created_at DESC.
   Future<List<Reaction>> getReactionsOnFilesSince({
     required int excludeUserID,
     required int sinceTime,
@@ -606,8 +632,6 @@ class SocialDB {
     return rows.map(_rowToReaction).toList();
   }
 
-  /// Gets all comments on files after [sinceTime], excluding the current user.
-  /// Returns comments sorted by created_at DESC.
   Future<List<Comment>> getCommentsOnFilesSince({
     required int excludeUserID,
     required int sinceTime,
@@ -624,8 +648,6 @@ class SocialDB {
     return rows.map(_rowToComment).toList();
   }
 
-  /// Gets all replies after [sinceTime], excluding the current user.
-  /// Returns replies sorted by created_at DESC.
   Future<List<Comment>> getRepliesSince({
     required int excludeUserID,
     required int sinceTime,
@@ -641,8 +663,6 @@ class SocialDB {
     );
     return rows.map(_rowToComment).toList();
   }
-
-  // ============ Cleanup Methods ============
 
   Future<void> deleteCollectionData(int collectionID) async {
     final db = await database;
@@ -682,11 +702,7 @@ class SocialDB {
     return await db.delete(_reactionsTable);
   }
 
-  // ============ Debug Methods ============
-
   Future<void> seedExampleData() async {}
-
-  // ============ Row Mappers ============
 
   Map<String, dynamic> _commentToRow(Comment comment) {
     return {

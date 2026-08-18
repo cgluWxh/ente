@@ -174,17 +174,27 @@ class UploadLocksDB {
     await db.delete(_streamQueueTable.table);
   }
 
-  Future<void> acquireLock(String id, String owner, int time) async {
+  Future<bool> tryAcquireLock(String id, String owner, int time) async {
     final db = await database;
     final row = <String, dynamic>{};
     row[_uploadLocksTable.columnID] = id;
     row[_uploadLocksTable.columnOwner] = owner;
     row[_uploadLocksTable.columnTime] = time;
-    await db.insert(
-      _uploadLocksTable.table,
-      row,
-      conflictAlgorithm: ConflictAlgorithm.fail,
-    );
+    try {
+      await db.insert(
+        _uploadLocksTable.table,
+        row,
+        conflictAlgorithm: ConflictAlgorithm.fail,
+      );
+      return true;
+    } on DatabaseException catch (e) {
+      final lockIDColumn =
+          '${_uploadLocksTable.table}.${_uploadLocksTable.columnID}';
+      if (e.isUniqueConstraintError(lockIDColumn)) {
+        return false;
+      }
+      rethrow;
+    }
   }
 
   Future<String> getLockData(String id) async {
@@ -342,7 +352,6 @@ class UploadLocksDB {
       partsURLs: partsURLs,
     );
 
-    // Retrieve MD5 data
     final String? fileMd5 = row[_trackUploadTable.columnFileMd5] as String?;
     List<String>? partMd5s;
     if (row[_trackUploadTable.columnPartMd5s] != null) {
@@ -364,7 +373,6 @@ class UploadLocksDB {
     );
   }
 
-  // validateResume checks if the cached links are valid for resuming upload
   void _validateResume(
     List<Map<String, Object?>> rows,
     String localId,
@@ -473,7 +481,7 @@ class UploadLocksDB {
       _trackUploadTable.columnPartSize: partSize,
       _trackUploadTable.columnLastAttemptedAt:
           DateTime.now().millisecondsSinceEpoch,
-      if (fileMd5 != null) _trackUploadTable.columnFileMd5: fileMd5,
+      _trackUploadTable.columnFileMd5: ?fileMd5,
       if (partMd5s != null)
         _trackUploadTable.columnPartMd5s: jsonEncode(partMd5s),
     });
@@ -531,7 +539,6 @@ class UploadLocksDB {
     );
   }
 
-  // getFileNameToLastAttemptedAtMap returns a map of encrypted file name to last attempted at time
   Future<Map<String, int>> getFileNameToLastAttemptedAtMap() {
     return database.then((db) async {
       final rows = await db.query(
@@ -580,7 +587,6 @@ class UploadLocksDB {
     });
   }
 
-  // Stream Queue Management Methods
   Future<void> addToStreamQueue(
     int uploadedFileID,
     String queueType, // 'create' or 'recreate'

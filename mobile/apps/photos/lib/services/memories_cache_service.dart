@@ -17,14 +17,13 @@ import "package:photos/events/memories_changed_event.dart";
 import "package:photos/events/memories_setting_changed.dart";
 import "package:photos/events/memory_seen_event.dart";
 import "package:photos/events/sync_status_update_event.dart";
-import "package:photos/l10n/l10n.dart";
+import "package:photos/locale.dart";
 import "package:photos/models/file/file.dart";
 import "package:photos/models/memories/memories_cache.dart";
 import "package:photos/models/memories/memory.dart";
 import "package:photos/models/memories/people_memory.dart";
 import "package:photos/models/memories/smart_memory.dart";
 import "package:photos/models/memories/smart_memory_constants.dart";
-import "package:photos/models/memories/trip_memory.dart";
 import "package:photos/service_locator.dart";
 import "package:photos/services/app_navigation_service.dart";
 import "package:photos/services/language_service.dart";
@@ -50,8 +49,7 @@ class MemoriesCacheService {
   static const _shouldUpdateCacheKey = "memories.shouldUpdateCache";
   static const _tripMemoryCarryForwardLimit = kTripSurfaceSlots;
 
-  /// Delay is for cache update to be done not during app init, during which a
-  /// lot of other things are happening.
+  // Avoid competing with other startup work.
   static const _kCacheUpdateDelay = Duration(seconds: 20);
 
   final SharedPreferences _prefs;
@@ -78,11 +76,7 @@ class MemoriesCacheService {
 
     Future.delayed(_kCacheUpdateDelay, () {
       _checkIfTimeToUpdateCache();
-      // Self-schedule cache updates independently of runAllML, so that users
-      // with ML disabled still get their memories cache refreshed on the
-      // configured cadence. Safe to call unconditionally: updateCache() is a
-      // no-op when neither _shouldUpdate nor forced is true, and the lock
-      // serialises against concurrent invocations from runAllML.
+      // Schedule independently of ML so non-ML memories also refresh.
       unawaited(updateCache());
       _memoriesDB.clearMemoriesSeenBeforeTime(
         DateTime.now()
@@ -94,7 +88,8 @@ class MemoriesCacheService {
     Bus.instance
         .on<FilesUpdatedEvent>()
         .where((event) {
-          return _shouldInvalidateForDeletedFiles(event.type);
+          return _shouldInvalidateForDeletedFiles(event.type) &&
+              event.source != "moveFrom";
         })
         .listen((event) async {
           await _invalidateDeletedFiles(event.updatedFiles);
@@ -207,7 +202,7 @@ class MemoriesCacheService {
   }
 
   bool _shouldInvalidateForDeletedFiles(EventType type) {
-    if (type == EventType.deletedFromEverywhere) {
+    if (type == EventType.deletedFromEverywhere || type == EventType.hide) {
       return true;
     }
 
@@ -858,15 +853,17 @@ class MemoriesCacheService {
         w?.log("gotten old cache");
         final MemoriesCache newCache = _processOldCache(oldCache);
         w?.log("processed old cache");
-        // calculate memories for this period and for the next period
         final now = DateTime.now();
         final next = now.add(kMemoriesUpdateFrequency);
         final mlReady = await _isMlReady();
-        final nowResult = await smartMemoriesService.calcSmartMemories(
-          now,
-          newCache,
-          mlEnabled: mlReady,
-        );
+        final periodResults = await smartMemoriesService
+            .calcCurrentAndNextSmartMemories(
+              now,
+              next,
+              newCache,
+              mlEnabled: mlReady,
+            );
+        final nowResult = periodResults.current;
         if (nowResult.failed) {
           _logger.warning(
             "Skipping memories cache update because current calculation failed",
@@ -876,16 +873,7 @@ class MemoriesCacheService {
         final carriedForwardTripEntries = List<ToShowMemory>.from(
           newCache.toShowMemories,
         );
-        newCache.toShowMemories.addAll(
-          nowResult.memories.whereType<TripMemory>().map(
-            (memory) => ToShowMemory.fromSmartMemory(memory, now),
-          ),
-        );
-        final nextResult = await smartMemoriesService.calcSmartMemories(
-          next,
-          newCache,
-          mlEnabled: mlReady,
-        );
+        final nextResult = periodResults.next;
         if (nextResult.failed) {
           _logger.warning(
             "Skipping memories cache update because next calculation failed",
@@ -902,9 +890,8 @@ class MemoriesCacheService {
         final nowEntries = nowResult.memories
             .map((memory) => _toCacheMemory(memory, now, localIdToIntId))
             .toList();
-        // Splice carried-forward trip entries into the natural trip slot so
-        // the UI keeps showing trips in their usual position (after
-        // onThisDay/people) instead of jumping to the front of the row.
+        // Keep carried trips with other trips instead of moving them to the
+        // front.
         int tripInsertIdx = nowEntries.indexWhere(
           (e) => e.type == MemoryType.trips,
         );
@@ -1109,8 +1096,7 @@ class MemoriesCacheService {
     if (memory.type != MemoryType.trips) {
       return false;
     }
-    // Drop legacy keyless trips during migration so they cannot coexist with
-    // newly recomputed keyed trips for the same trip.
+    // Drop old trips without keys to avoid duplicates after migration.
     final tripKey = memory.tripKey;
     return tripKey != null && tripKey.isNotEmpty;
   }
@@ -1135,17 +1121,13 @@ class MemoriesCacheService {
     Bus.instance.fire(MemoriesChangedEvent());
   }
 
-  /// WARNING: Use for testing only, TODO: lau: remove later
+  // WARNING: Use for testing only, TODO: lau: remove later
   Future<MemoriesCache> debugCacheForTesting() async {
     final oldCache = await _readCacheFromDisk();
     final MemoriesCache newCache = _processOldCache(oldCache);
     return newCache;
   }
 
-  /// WARNING: Use for testing only.
-  ///
-  /// Computes the full smart memories set with debug surfacing enabled without
-  /// mutating the persisted memories cache.
   Future<List<SmartMemory>> debugGetAllMemories({DateTime? calcTime}) async {
     return _memoriesUpdateLock.synchronized(() async {
       final mlReady = await _isMlReady();
@@ -1296,6 +1278,7 @@ class MemoriesCacheService {
         );
         return;
       }
+      if (context != null && !context.mounted) return;
       await _routeToPage(
         DetailPage(DetailPageConfiguration([file], 0, "memorywidget-fallback")),
         context: context,
@@ -1303,10 +1286,10 @@ class MemoriesCacheService {
       );
       return;
     }
+    if (context != null && !context.mounted) return;
     await _routeToPage(
       AllMemoriesPage(
-        allMemories: _cachedMemories!.map((e) => e.memories).toList(),
-        allTitles: _cachedMemories!.map((e) => e.title).toList(),
+        allMemories: _cachedMemories!,
         initialPageIndex: memoryIdx,
         inititalFileIndex: fileIdx,
         isFromWidgetOrNotifications: true,
@@ -1333,10 +1316,10 @@ class MemoriesCacheService {
       _logger.warning("Could not find onThisDay memory");
       return;
     }
+    if (context != null && !context.mounted) return;
     await _routeToPage(
       AllMemoriesPage(
-        allMemories: allMemories.map((e) => e.memories).toList(),
-        allTitles: allMemories.map((e) => e.title).toList(),
+        allMemories: allMemories,
         initialPageIndex: memoryIdx,
         inititalFileIndex: 0,
         isFromWidgetOrNotifications: true,
@@ -1385,6 +1368,7 @@ class MemoriesCacheService {
         _logger.severe("Person with ID $personID not found");
         return;
       }
+      if (context != null && !context.mounted) return;
       await _routeToPage(
         PeoplePage(person: person, searchResult: null),
         context: context,
@@ -1392,6 +1376,7 @@ class MemoriesCacheService {
       );
       return;
     }
+    if (context != null && !context.mounted) return;
     await _routeToPage(
       FullScreenMemoryDataUpdater(
         initialIndex: 0,
@@ -1428,25 +1413,25 @@ class MemoriesCacheService {
     );
   }
 
-  Future<void> toggleOnThisDayNotifications() async {
-    final oldValue = localSettings.isOnThisDayNotificationsEnabled;
-    await localSettings.setOnThisDayNotificationsEnabled(!oldValue);
-    _logger.info("Turning onThisDayNotifications ${oldValue ? "off" : "on"}");
-    if (oldValue) {
-      await _clearAllScheduledOnThisDayNotifications();
-    } else {
+  Future<void> setOnThisDayNotifications(bool value) async {
+    if (localSettings.isOnThisDayNotificationsEnabled == value) return;
+    await localSettings.setOnThisDayNotificationsEnabled(value);
+    _logger.info("Turning onThisDayNotifications ${value ? "on" : "off"}");
+    if (value) {
       queueUpdateCache();
+    } else {
+      await _clearAllScheduledOnThisDayNotifications();
     }
   }
 
-  Future<void> toggleBirthdayNotifications() async {
-    final oldValue = localSettings.birthdayNotificationsEnabled;
-    await localSettings.setBirthdayNotificationsEnabled(!oldValue);
-    _logger.info("Turning birhtdayNotifications ${oldValue ? "off" : "on"}");
-    if (oldValue) {
-      await _clearAllScheduledBirthdayNotifications();
-    } else {
+  Future<void> setBirthdayNotifications(bool value) async {
+    if (localSettings.birthdayNotificationsEnabled == value) return;
+    await localSettings.setBirthdayNotificationsEnabled(value);
+    _logger.info("Turning birthdayNotifications ${value ? "on" : "off"}");
+    if (value) {
       queueUpdateCache();
+    } else {
+      await _clearAllScheduledBirthdayNotifications();
     }
   }
 

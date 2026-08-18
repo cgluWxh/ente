@@ -1,6 +1,7 @@
 import "dart:async";
 
 import "package:ente_pure_utils/ente_pure_utils.dart";
+import "package:ente_strings/ente_strings.dart";
 import "package:flutter/material.dart";
 import "package:hugeicons/hugeicons.dart";
 import "package:intl/intl.dart";
@@ -8,7 +9,6 @@ import "package:photos/core/event_bus.dart";
 import "package:photos/events/local_photos_updated_event.dart";
 import "package:photos/events/notification_event.dart";
 import "package:photos/events/tab_changed_event.dart";
-import "package:photos/generated/intl/app_localizations.dart";
 import "package:photos/service_locator.dart";
 import "package:photos/services/machine_learning/ml_model_download_service.dart";
 import "package:photos/theme/ente_theme.dart";
@@ -140,7 +140,7 @@ class _MLProgressBannerState extends State<MLProgressBanner> {
 
     final colorScheme = getEnteColorScheme(context);
     final textTheme = getEnteTextTheme(context);
-    final l10n = AppLocalizations.of(context);
+    final l10n = context.strings;
     final format = NumberFormat();
     final progress = total > 0 ? status.indexedItems.toDouble() / total : 0.0;
     final showModelDownloadPhase = _shouldShowModelDownloadPhase(status);
@@ -155,7 +155,7 @@ class _MLProgressBannerState extends State<MLProgressBanner> {
     );
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      padding: const EdgeInsets.only(top: 8, bottom: 20),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: () {
@@ -163,8 +163,8 @@ class _MLProgressBannerState extends State<MLProgressBanner> {
         },
         child: Container(
           decoration: BoxDecoration(
-            color: colorScheme.backgroundColour,
-            borderRadius: BorderRadius.circular(14),
+            color: colorScheme.backgroundElevated2,
+            borderRadius: BorderRadius.circular(20),
           ),
           padding: const EdgeInsets.all(16),
           child: Column(
@@ -205,7 +205,7 @@ class _MLProgressBannerState extends State<MLProgressBanner> {
                 borderRadius: BorderRadius.circular(2.5),
                 child: LinearProgressIndicator(
                   value: showModelDownloadPhase ? 0.0 : progress,
-                  minHeight: 5,
+                  minHeight: 4,
                   backgroundColor: colorScheme.fillFaint,
                   valueColor: AlwaysStoppedAnimation<Color>(
                     colorScheme.greenBase,

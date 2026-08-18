@@ -1,11 +1,11 @@
 import "package:dio/dio.dart";
 import "package:ente_accounts/ente_accounts.dart";
+import "package:ente_components/ente_components.dart";
 import "package:ente_configuration/base_configuration.dart";
 import "package:ente_crypto_api/ente_crypto_api.dart";
 import "package:ente_strings/ente_strings.dart";
 import "package:ente_ui/components/alert_bottom_sheet.dart";
 import "package:ente_ui/components/buttons/dynamic_fab.dart";
-import "package:ente_ui/components/buttons/gradient_button.dart";
 import "package:ente_ui/theme/ente_theme.dart";
 import "package:ente_ui/utils/dialog_util.dart";
 import "package:ente_utils/email_util.dart";
@@ -13,11 +13,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import "package:logging/logging.dart";
 
-// LoginPasswordVerificationPage is a page that allows the user to enter their password to verify their identity.
-// If the password is correct, then the user is either directed to
-// PasswordReentryPage (if the user has not yet set up 2FA) or TwoFactorAuthenticationPage (if the user has set up 2FA).
-// In the PasswordReentryPage, the password is auto-filled based on the
-// volatile password.
 class LoginPasswordVerificationPage extends StatefulWidget {
   final BaseConfiguration config;
   final SrpAttributes srpAttributes;
@@ -115,13 +110,16 @@ class _LoginPasswordVerificationPageState
     await dialog.show();
     try {
       await UserService.instance.verifyEmailViaPassword(
-        context,
+        context.mounted ? context : null,
         widget.srpAttributes,
         password,
         dialog,
       );
     } on DioException catch (e, s) {
       await dialog.hide();
+      if (!context.mounted) {
+        return;
+      }
 
       if (e.response != null && e.response!.statusCode == 401) {
         _logger.severe('server reject, failed verify SRP login', e, s);
@@ -152,32 +150,36 @@ class _LoginPasswordVerificationPageState
       await dialog.hide();
       if (e is LoginKeyDerivationError) {
         _logger.severe('loginKey derivation error', e, s);
-        // LoginKey err, perform regular login via ott verification
+        // Fall back to OTT when login-key derivation fails.
         await UserService.instance.sendOtt(
-          context,
+          context.mounted ? context : null,
           email!,
           isCreateAccountScreen: true,
         );
         return;
       } else if (e is KeyDerivationError) {
-        // device is not powerful enough to perform derive key
+        if (!context.mounted) {
+          return;
+        }
+        // This device cannot derive the key; offer recovery instead.
         final result = await showAlertBottomSheet<bool>(
           context,
           title: context.strings.recreatePasswordTitle,
           message: context.strings.recreatePasswordBody,
           assetPath: 'assets/warning-grey.png',
           buttons: [
-            GradientButton(
-              text: context.strings.useRecoveryKey,
+            ButtonComponent(
+              label: context.strings.useRecoveryKey,
               onTap: () {
                 Navigator.of(context).pop(true);
               },
+              shouldSurfaceExecutionStates: false,
             ),
           ],
         );
         if (result == true) {
           await UserService.instance.sendOtt(
-            context,
+            context.mounted ? context : null,
             email!,
             isResetPasswordScreen: true,
           );
@@ -185,11 +187,13 @@ class _LoginPasswordVerificationPageState
         return;
       } else {
         _logger.severe('unexpected error while verifying password', e, s);
-        await _showContactSupportDialog(
-          context,
-          title: context.strings.oops,
-          message: context.strings.verificationFailedPleaseTryAgain,
-        );
+        if (context.mounted) {
+          await _showContactSupportDialog(
+            context,
+            title: context.strings.oops,
+            message: context.strings.verificationFailedPleaseTryAgain,
+          );
+        }
       }
     }
   }
@@ -205,15 +209,16 @@ class _LoginPasswordVerificationPageState
       message: message,
       assetPath: 'assets/warning-grey.png',
       buttons: [
-        GradientButton(
-          text: context.strings.contactSupport,
+        ButtonComponent(
+          label: context.strings.contactSupport,
           onTap: () {
             Navigator.of(context).pop(true);
           },
+          shouldSurfaceExecutionStates: false,
         ),
       ],
     );
-    if (result == true) {
+    if (result == true && context.mounted) {
       await sendLogs(context, "support@ente.com", postShare: () {});
     }
   }
@@ -259,8 +264,7 @@ class _LoginPasswordVerificationPageState
                       ),
                       const SizedBox(height: 8),
                       Visibility(
-                        // hidden textForm for suggesting auto-fill service for saving
-                        // password
+                        // Prompts platform password saving.
                         visible: false,
                         child: TextFormField(
                           autofillHints: const [AutofillHints.email],
@@ -355,9 +359,11 @@ class _LoginPasswordVerificationPageState
                               await dialog.show();
                               await widget.config.logout();
                               await dialog.hide();
-                              Navigator.of(
-                                context,
-                              ).popUntil((route) => route.isFirst);
+                              if (mounted) {
+                                Navigator.of(
+                                  context,
+                                ).popUntil((route) => route.isFirst);
+                              }
                             },
                             child: Text(
                               context.strings.changeEmail,

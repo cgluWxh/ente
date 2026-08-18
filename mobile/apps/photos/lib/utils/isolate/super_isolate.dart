@@ -1,11 +1,10 @@
 import 'dart:async';
 import 'dart:isolate';
 
-import "package:dart_ui_isolate/dart_ui_isolate.dart";
-import "package:flutter/foundation.dart" show kDebugMode;
 import "package:flutter/services.dart";
 import "package:logging/logging.dart";
 import "package:photos/core/error-reporting/isolate_logging.dart";
+import "package:photos/core/error-reporting/super_logging.dart";
 import "package:photos/models/base/id.dart";
 import "package:photos/utils/isolate/isolate_operations.dart";
 import "package:synchronized/synchronized.dart";
@@ -21,11 +20,10 @@ abstract class SuperIsolate {
   final _initIsolateLock = Lock();
   final _functionLock = Lock();
 
-  bool get isDartUiIsolate;
   bool get shouldAutomaticDispose;
   String get isolateName;
 
-  late dynamic _isolate;
+  late Isolate _isolate;
   late ReceivePort _receivePort;
   late SendPort _mainSendPort;
 
@@ -38,23 +36,17 @@ abstract class SuperIsolate {
 
       _receivePort = ReceivePort();
 
-      // Get the root token before spawning the isolate
       final rootToken = RootIsolateToken.instance;
-      if (rootToken == null && !isDartUiIsolate) {
+      if (rootToken == null) {
         logger.severe('Failed to get RootIsolateToken');
         return;
       }
 
       try {
-        _isolate = isDartUiIsolate
-            ? await DartUiIsolate.spawn(_isolateMain, [
-                _receivePort.sendPort,
-                null,
-              ])
-            : await Isolate.spawn(_isolateMain, [
-                _receivePort.sendPort,
-                rootToken,
-              ], debugName: isolateName);
+        _isolate = await Isolate.spawn(_isolateMain, [
+          _receivePort.sendPort,
+          rootToken,
+        ], debugName: isolateName);
         _mainSendPort = await _receivePort.first as SendPort;
 
         if (shouldAutomaticDispose) _resetInactivityTimer();
@@ -70,16 +62,14 @@ abstract class SuperIsolate {
   @pragma('vm:entry-point')
   static void _isolateMain(List<dynamic> args) async {
     final SendPort mainSendPort = args[0] as SendPort;
-    final RootIsolateToken? rootToken = args[1] as RootIsolateToken?;
+    final RootIsolateToken rootToken = args[1] as RootIsolateToken;
 
-    Logger.root.level = kDebugMode ? Level.ALL : Level.INFO;
+    Logger.root.level = SuperLogging.rootLoggerLevel;
     final IsolateLogger isolateLogger = IsolateLogger();
     Logger.root.onRecord.listen(isolateLogger.onLogRecordInIsolate);
     final receivePort = ReceivePort();
     mainSendPort.send(receivePort.sendPort);
-    if (rootToken != null) {
-      BackgroundIsolateBinaryMessenger.ensureInitialized(rootToken);
-    }
+    BackgroundIsolateBinaryMessenger.ensureInitialized(rootToken);
     final logger = Logger('SuperIsolate');
     logger.info('IsolateMain started');
 
@@ -102,9 +92,6 @@ abstract class SuperIsolate {
     });
   }
 
-  /// The common method to run any operation in the isolate.
-  /// It sends the [message] to [_isolateMain] and waits for the result.
-  /// The actual function executed is [isolateFunction].
   Future<dynamic> runInIsolate(
     IsolateOperation operation,
     Map<String, dynamic> args,
@@ -134,7 +121,6 @@ abstract class SuperIsolate {
         IsolateLogger.handLogStringsToMainLogger(logs);
         final data = receivedMessage['data'];
         if (data is Map && data.containsKey('error')) {
-          // Handle the error
           final errorMessage = data['error'];
           final errorStackTrace = data['stackTrace'];
           final exception = Exception(errorMessage);
@@ -158,7 +144,6 @@ abstract class SuperIsolate {
     });
   }
 
-  /// Clears specific data from the isolate's cache
   Future<void> clearCachedData(String key) async {
     await runInIsolate(IsolateOperation.clearIsolateCache, {'key': key});
   }
@@ -167,15 +152,11 @@ abstract class SuperIsolate {
     await runInIsolate(IsolateOperation.clearAllIsolateCache, {});
   }
 
-  /// Resets a timer that kills the isolate after a certain amount of inactivity.
-  ///
-  /// Should be called after initialization (e.g. inside `init()`) and after every call to isolate (e.g. inside `_runInIsolate()`)
   void _resetInactivityTimer() {
     _inactivityTimer?.cancel();
     _inactivityTimer = Timer(_inactivityDuration, () {
       if (_activeTasks > 0) {
         logger.info('Tasks are still running. Delaying isolate disposal.');
-        // Optionally, reschedule the timer to check again later.
         _resetInactivityTimer();
       } else {
         logger.info(

@@ -1,6 +1,6 @@
-import "package:ente_auth/l10n/l10n.dart";
 import "package:ente_auth/models/code.dart";
 import "package:ente_auth/ui/components/selection_action_button.dart";
+import "package:ente_strings/ente_strings.dart";
 import 'package:flutter/material.dart';
 
 class CodeSelectionActionsWidget extends StatefulWidget {
@@ -36,8 +36,6 @@ class _CodeSelectionActionsWidgetState
     extends State<CodeSelectionActionsWidget> {
   late final scrollController = ScrollController();
 
-  // static final _logger = Logger("CodeSelectionActionsWidget");
-
   @override
   void dispose() {
     scrollController.dispose();
@@ -51,7 +49,7 @@ class _CodeSelectionActionsWidgetState
     if (!widget.code.isTrashed) {
       items.add(
         SelectionActionButton(
-          labelText: context.l10n.share,
+          labelText: context.strings.share,
           icon: Icons.adaptive.share_outlined,
           onTap: widget.onShare,
         ),
@@ -60,8 +58,8 @@ class _CodeSelectionActionsWidgetState
         items.add(
           SelectionActionButton(
             labelText: widget.code.isPinned
-                ? context.l10n.unpinText
-                : context.l10n.pinText,
+                ? context.strings.unpinText
+                : context.strings.pinText,
             icon: widget.code.isPinned
                 ? Icons.push_pin
                 : Icons.push_pin_outlined,
@@ -82,7 +80,7 @@ class _CodeSelectionActionsWidgetState
     if (widget.code.isTrashed) {
       items.add(
         SelectionActionButton(
-          labelText: context.l10n.restore,
+          labelText: context.strings.restore,
           icon: Icons.restore_outlined,
           onTap: widget.onRestore,
         ),
@@ -90,7 +88,7 @@ class _CodeSelectionActionsWidgetState
     } else {
       items.add(
         SelectionActionButton(
-          labelText: context.l10n.edit,
+          labelText: context.strings.edit,
           icon: Icons.edit,
           onTap: widget.onEdit,
         ),
@@ -100,8 +98,8 @@ class _CodeSelectionActionsWidgetState
     items.add(
       SelectionActionButton(
         labelText: widget.code.isTrashed
-            ? context.l10n.delete
-            : context.l10n.trash,
+            ? context.strings.delete
+            : context.strings.trash,
         icon: widget.code.isTrashed ? Icons.delete_forever : Icons.delete,
         onTap: widget.code.isTrashed ? widget.onDelete : widget.onTrashed,
       ),

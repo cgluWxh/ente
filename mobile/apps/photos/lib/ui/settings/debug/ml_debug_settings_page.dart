@@ -15,6 +15,8 @@ import "package:photos/services/machine_learning/face_ml/face_clustering/face_cl
 import "package:photos/services/machine_learning/face_ml/person/person_service.dart";
 import "package:photos/services/machine_learning/ml_indexing_isolate.dart";
 import "package:photos/services/machine_learning/ml_model_download_service.dart";
+import "package:photos/services/machine_learning/ml_process_lock.dart";
+import "package:photos/services/machine_learning/ml_run_control.dart";
 import "package:photos/services/machine_learning/ml_service.dart";
 import "package:photos/services/machine_learning/semantic_search/semantic_search_service.dart";
 import "package:photos/theme/ente_theme.dart";
@@ -247,6 +249,16 @@ class _MLDebugSettingsPageState extends State<MLDebugSettingsPage> {
           trailingIcon: Icons.chevron_right_outlined,
           trailingIconIsMuted: true,
           onTap: () async => _onTriggerClustering(context),
+        ),
+        MenuItemWidgetNew(
+          title: "ML process lock state",
+          leadingIconWidget: _buildIconWidget(
+            context,
+            HugeIcons.strokeRoundedLock,
+          ),
+          trailingIcon: Icons.chevron_right_outlined,
+          trailingIconIsMuted: true,
+          onTap: () async => _onShowProcessLockState(context),
         ),
         MenuItemWidgetNew(
           title: "Update discover",
@@ -637,7 +649,7 @@ class _MLDebugSettingsPageState extends State<MLDebugSettingsPage> {
       await setMLConsent(mlConsent);
       logger.info('ML consent turned ${mlConsent ? 'on' : 'off'}');
       if (!mlConsent) {
-        MLService.instance.pauseIndexingAndClustering();
+        MLService.instance.stopActiveRun(MlStopReason.manual);
         unawaited(MLIndexingIsolate.instance.cleanupLocalIndexingModels());
       } else {
         await MLService.instance.init();
@@ -677,7 +689,7 @@ class _MLDebugSettingsPageState extends State<MLDebugSettingsPage> {
     if (localIndexing) {
       unawaited(MLService.instance.runAllML(force: true));
     } else {
-      MLService.instance.pauseIndexingAndClustering();
+      MLService.instance.stopActiveRun(MlStopReason.manual);
       unawaited(MLIndexingIsolate.instance.cleanupLocalIndexingModels());
     }
     if (mounted) {
@@ -690,7 +702,7 @@ class _MLDebugSettingsPageState extends State<MLDebugSettingsPage> {
       MLService.instance.debugIndexingDisabled =
           !MLService.instance.debugIndexingDisabled;
       if (MLService.instance.debugIndexingDisabled) {
-        MLService.instance.pauseIndexingAndClustering();
+        MLService.instance.stopActiveRun(MlStopReason.manual);
       } else {
         unawaited(MLService.instance.runAllML());
       }
@@ -789,15 +801,33 @@ class _MLDebugSettingsPageState extends State<MLDebugSettingsPage> {
     }
   }
 
+  Future<void> _onShowProcessLockState(BuildContext context) async {
+    try {
+      final description = await MlProcessLock.instance.describeState();
+      if (!context.mounted) return;
+      showShortToast(context, description);
+    } catch (e, s) {
+      logger.warning('fetching ml process lock state failed', e, s);
+      if (!context.mounted) return;
+      await showGenericErrorDialog(context: context, error: e);
+    }
+  }
+
   Future<void> _onTriggerClustering(BuildContext context) async {
     try {
-      await PersonService.instance.fetchRemoteClusterFeedback();
+      await PersonService.instance.sync();
       MLService.instance.debugIndexingDisabled = false;
-      await MLService.instance.clusterAllImages();
+      final attempt = await MLService.instance.clusterAllImages();
+      if (!context.mounted) return;
+      if (attempt != MlLockAttempt.ran) {
+        showShortToast(context, "Denied (${attempt.name})");
+        return;
+      }
       Bus.instance.fire(PeopleChangedEvent());
       showShortToast(context, "Done");
     } catch (e, s) {
       logger.warning('clustering failed ', e, s);
+      if (!context.mounted) return;
       await showGenericErrorDialog(context: context, error: e);
     }
   }
@@ -805,9 +835,11 @@ class _MLDebugSettingsPageState extends State<MLDebugSettingsPage> {
   Future<void> _onUpdateDiscover(BuildContext context) async {
     try {
       await magicCacheService.updateCache(forced: true);
+      if (!context.mounted) return;
       showShortToast(context, "Done");
     } catch (e, s) {
       logger.warning('Update discover failed', e, s);
+      if (!context.mounted) return;
       await showGenericErrorDialog(context: context, error: e);
     }
   }
@@ -817,9 +849,11 @@ class _MLDebugSettingsPageState extends State<MLDebugSettingsPage> {
       final now = DateTime.now();
       await memoriesCacheService.updateCache(forced: true);
       final duration = DateTime.now().difference(now);
+      if (!context.mounted) return;
       showShortToast(context, "Done in ${duration.inSeconds} seconds");
     } catch (e, s) {
       logger.warning('Update memories failed', e, s);
+      if (!context.mounted) return;
       await showGenericErrorDialog(context: context, error: e);
     }
   }
@@ -830,10 +864,12 @@ class _MLDebugSettingsPageState extends State<MLDebugSettingsPage> {
 
   Future<void> _onSyncPersonMappings(BuildContext context) async {
     try {
-      await faceRecognitionService.syncPersonFeedback();
+      await PersonService.instance.sync();
+      if (!context.mounted) return;
       showShortToast(context, "Done");
     } catch (e, s) {
       logger.warning('sync person mappings failed ', e, s);
+      if (!context.mounted) return;
       await showGenericErrorDialog(context: context, error: e);
     }
   }
@@ -842,9 +878,11 @@ class _MLDebugSettingsPageState extends State<MLDebugSettingsPage> {
     try {
       await wrappedService.forceRecompute();
       await localSettings.resetWrapped2025Complete();
+      if (!context.mounted) return;
       showShortToast(context, "Ente Rewind recomputed");
     } catch (e, s) {
       logger.severe('Wrapped recompute failed ', e, s);
+      if (!context.mounted) return;
       await showGenericErrorDialog(context: context, error: e);
     }
   }
@@ -854,9 +892,11 @@ class _MLDebugSettingsPageState extends State<MLDebugSettingsPage> {
       final now = DateTime.now();
       await memoriesCacheService.clearMemoriesCache();
       final duration = DateTime.now().difference(now);
+      if (!context.mounted) return;
       showShortToast(context, "Done in ${duration.inSeconds} seconds");
     } catch (e, s) {
       logger.warning('Clear memories cache failed', e, s);
+      if (!context.mounted) return;
       await showGenericErrorDialog(context: context, error: e);
     }
   }
@@ -872,9 +912,11 @@ class _MLDebugSettingsPageState extends State<MLDebugSettingsPage> {
         try {
           await mlDataDB.dropFacesFeedbackTables();
           Bus.instance.fire(PeopleChangedEvent());
+          if (!context.mounted) return;
           showShortToast(context, "Done");
         } catch (e, s) {
           logger.warning('reset feedback failed ', e, s);
+          if (!context.mounted) return;
           await showGenericErrorDialog(context: context, error: e);
         }
       },
@@ -897,9 +939,11 @@ class _MLDebugSettingsPageState extends State<MLDebugSettingsPage> {
           }
           await mlDataDB.dropClustersAndPersonTable();
           Bus.instance.fire(PeopleChangedEvent());
+          if (!context.mounted) return;
           showShortToast(context, "Done");
         } catch (e, s) {
           logger.warning('peopleToPersonMapping remove failed ', e, s);
+          if (!context.mounted) return;
           await showGenericErrorDialog(context: context, error: e);
         }
       },
@@ -917,9 +961,11 @@ class _MLDebugSettingsPageState extends State<MLDebugSettingsPage> {
         try {
           await mlDataDB.dropClustersAndPersonTable(faces: true);
           Bus.instance.fire(PeopleChangedEvent());
+          if (!context.mounted) return;
           showShortToast(context, "Done");
         } catch (e, s) {
           logger.warning('drop feedback failed ', e, s);
+          if (!context.mounted) return;
           await showGenericErrorDialog(context: context, error: e);
         }
       },
@@ -936,9 +982,11 @@ class _MLDebugSettingsPageState extends State<MLDebugSettingsPage> {
       firstButtonOnTap: () async {
         try {
           await SemanticSearchService.instance.clearIndexes();
+          if (!context.mounted) return;
           showShortToast(context, "Done");
         } catch (e, s) {
           logger.warning('drop clip embeddings failed ', e, s);
+          if (!context.mounted) return;
           await showGenericErrorDialog(context: context, error: e);
         }
       },
@@ -958,12 +1006,14 @@ class _MLDebugSettingsPageState extends State<MLDebugSettingsPage> {
               ? ClipVectorDB.localGalleryInstance
               : ClipVectorDB.instance;
           await vectorDB.deleteIndexFile();
+          if (!context.mounted) return;
           showShortToast(context, "Done");
           if (mounted) {
             setState(() {});
           }
         } catch (e, s) {
           logger.warning('reset usearch index failed ', e, s);
+          if (!context.mounted) return;
           await showGenericErrorDialog(context: context, error: e);
         }
       },

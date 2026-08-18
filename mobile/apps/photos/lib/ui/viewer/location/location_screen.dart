@@ -1,6 +1,7 @@
 import "dart:async";
 import 'dart:developer' as dev;
 
+import "package:ente_ui/components/loading_widget.dart";
 import "package:flutter/material.dart";
 import "package:photos/core/constants.dart";
 import "package:photos/core/event_bus.dart";
@@ -18,7 +19,6 @@ import "package:photos/services/filter/db_filters.dart";
 import "package:photos/services/location_service.dart";
 import "package:photos/states/location_screen_state.dart";
 import "package:photos/theme/ente_theme.dart";
-import "package:photos/ui/common/loading_widget.dart";
 import "package:photos/ui/viewer/actions/file_selection_overlay_bar.dart";
 import "package:photos/ui/viewer/gallery/gallery.dart";
 import "package:photos/ui/viewer/gallery/gallery_app_bar_widget.dart";
@@ -42,10 +42,6 @@ class _LocationScreenState extends State<LocationScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final heightOfStatusBar = MediaQuery.of(context).viewPadding.top;
-    final heightOfAppBar = GalleryAppBarWidget.hierarchicalPreferredHeight(
-      context,
-    );
     final locationTag = InheritedLocationScreenState.of(
       context,
     ).locationTagEntity.item;
@@ -60,27 +56,9 @@ class _LocationScreenState extends State<LocationScreen> {
             ),
           ),
           child: Scaffold(
-            appBar: PreferredSize(
-              preferredSize: Size(double.infinity, heightOfAppBar),
-              child: GalleryAppBarWidget(
-                GalleryType.locationTag,
-                locationTag.name,
-                selectedFiles,
-              ),
-            ),
-            body: Column(
-              children: <Widget>[
-                SizedBox(
-                  height:
-                      MediaQuery.of(context).size.height -
-                      (heightOfAppBar + heightOfStatusBar),
-                  width: double.infinity,
-                  child: LocationGalleryWidget(
-                    tagPrefix: widget.tagPrefix,
-                    selectedFiles: selectedFiles,
-                  ),
-                ),
-              ],
+            body: LocationGalleryWidget(
+              tagPrefix: widget.tagPrefix,
+              selectedFiles: selectedFiles,
             ),
           ),
         ),
@@ -158,12 +136,19 @@ class _LocationGalleryWidgetState extends State<LocationGalleryWidget> {
     final selectedRadius = InheritedLocationScreenState.of(
       context,
     ).locationTagEntity.item.radius;
+    final locationTag = InheritedLocationScreenState.of(
+      context,
+    ).locationTagEntity.item;
     final centerPoint = InheritedLocationScreenState.of(
       context,
     ).locationTagEntity.item.centerPoint;
+    final appBar = GalleryAppBarWidget.sliverConfig(
+      GalleryType.locationTag,
+      locationTag.name,
+      _selectedFiles,
+    );
 
     Future<FileLoadResult> filterFiles() async {
-      //waiting for allFilesWithLocation to be initialized
       await fileLoadResult;
       final stopWatch = Stopwatch()..start();
       final filesInLocation = allFilesWithLocation;
@@ -185,7 +170,6 @@ class _LocationGalleryWidgetState extends State<LocationGalleryWidget> {
     }
 
     return FutureBuilder(
-      //rebuild gallery only when there is change in radius or center point
       key: ValueKey("$centerPoint$selectedRadius"),
       builder: (context, snapshot) {
         if (snapshot.hasData) {
@@ -205,8 +189,10 @@ class _LocationGalleryWidgetState extends State<LocationGalleryWidget> {
                             ? HierarchicalSearchGallery(
                                 tagPrefix: widget.tagPrefix,
                                 selectedFiles: _selectedFiles,
+                                appBar: appBar,
                               )
                             : Gallery(
+                                appBar: appBar,
                                 loadingWidget: Column(
                                   children: [
                                     EnteLoadingWidget(
@@ -246,7 +232,15 @@ class _LocationGalleryWidgetState extends State<LocationGalleryWidget> {
             ),
           );
         } else {
-          return const Column(children: [Expanded(child: EnteLoadingWidget())]);
+          return CustomScrollView(
+            slivers: [
+              appBar.buildSliver(context),
+              const SliverFillRemaining(
+                hasScrollBody: false,
+                child: EnteLoadingWidget(),
+              ),
+            ],
+          );
         }
       },
       future: filterFiles(),

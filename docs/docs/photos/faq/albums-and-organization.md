@@ -98,7 +98,9 @@ Photos automatically move to Uncategorized in these situations:
 
 **When deleting from watched folders**: On desktop, if you delete a file from a folder being watched by Ente, the corresponding photo in Ente moves to Uncategorized (it's not permanently deleted).
 
-**Note**: Photos uploaded by others (from shared albums) do not go to Uncategorized when removed.
+> [!NOTE]
+>
+> Photos uploaded by others (from shared albums) do not go to Uncategorized when removed.
 
 ### If all my photos are in Uncategorized, how do I move them to resemble the local album structure I have on my device? {#move-uncategorized-to-albums}
 
@@ -186,7 +188,7 @@ Not directly, but you can minimize it:
 **On mobile:**
 
 - Open the Albums tab
-- Scroll to the bottom
+- Tap on 'v' icon at the right.
 - Tap on "Uncategorized"
 
 **On web/desktop:**
@@ -218,7 +220,9 @@ Yes, archived photos still appear in search results and in their respective albu
 
 Open the photo, tap the three dots menu (overflow menu), and select "Hide" (the action with the eye icon). Hidden items will only be accessible from the special "Hidden" category at the bottom of the Albums screen, which requires biometric authentication to view.
 
-**Note**: Hidden items may still appear in "On device" albums within Ente as long as they're present in your native device gallery. Once you remove them from your device, they'll stop showing up there.
+> [!NOTE]
+>
+> Hidden items may still appear in "On device" albums within Ente as long as they're present in your native device gallery. Once you remove them from your device, they'll stop showing up there.
 
 ### How do I archive photos in Ente? {#how-to-archive}
 
@@ -269,6 +273,18 @@ Desktop doesn't have a "Similar images" feature. Use the mobile app for AI-power
 Ente intelligently manages symlinks to ensure no album loses all photos from a scene.
 
 Learn more in the [Storage optimization guide](/photos/features/albums-and-organization/storage-optimization).
+
+### How does Ente decide which photo to keep in a similar photos group? {#similar-photos-selection-criteria}
+
+When you review a similar photos group, Ente auto-selects every file except one for deletion, in this order:
+
+1. **Favorited status**: A photo you've marked Favorite is always kept and never auto-selected for deletion, regardless of size.
+2. **File size**: Among the rest, the largest file is kept. Smaller ones are auto-selected for deletion.
+3. **Filename**: Used only as a tiebreaker when two files are the exact same size.
+
+> [!NOTE]
+>
+> This compares file size only, not resolution or EXIF completeness. These usually line up with size, but not always - a heavily-compressed high-resolution photo can be smaller than a lightly-compressed low-resolution one.
 
 ### Will I lose my photos when freeing up device space? {#free-up-space-safe}
 
@@ -329,7 +345,8 @@ If you accidentally deleted photos, you can restore them from Trash within 30 da
 **On mobile:**
 
 - Open the Albums tab
-- Scroll to the bottom and tap "Trash"
+- Tap on 'v' icon at the right.
+- Tap "Trash"
 - Select the photos you want to restore
 - Tap the "Restore" button
 
@@ -359,7 +376,9 @@ To free up storage space immediately, you can permanently delete items from tras
 - Choose "Delete permanently" from the menu
 - Confirm the action
 
-**Warning**: Permanently deleted items cannot be recovered.
+> [!WARNING]
+>
+> Permanently deleted items cannot be recovered.
 
 ### Can I recover files after 30 days in trash? {#recover-after-30-days}
 

@@ -2,23 +2,22 @@ import "dart:async";
 
 import "package:ente_components/ente_components.dart";
 import "package:ente_pure_utils/ente_pure_utils.dart";
+import "package:ente_strings/ente_strings.dart";
 import "package:flutter/material.dart";
 import "package:flutter/services.dart";
 import "package:hugeicons/hugeicons.dart";
-import "package:photos/generated/l10n.dart";
 import "package:photos/models/api/memory_share/memory_share.dart";
 import "package:photos/models/button_result.dart";
 import "package:photos/models/collection/collection.dart";
 import "package:photos/models/collection/collection_items.dart";
 import "package:photos/services/collections_service.dart";
 import "package:photos/services/memory_share_service.dart";
-import "package:photos/theme/ente_theme.dart";
 import "package:photos/ui/actions/collection/collection_sharing_actions.dart";
 import "package:photos/ui/components/alert_bottom_sheet.dart";
 import "package:photos/ui/components/buttons/button_widget.dart"
     show ButtonAction;
 import "package:photos/ui/components/buttons/button_widget_v2.dart";
-import "package:photos/ui/components/buttons/soft_icon_button.dart";
+import "package:photos/ui/components/empty_state_component.dart";
 import "package:photos/ui/sharing/memory_link_details_sheet.dart";
 import "package:photos/ui/tabs/shared/memory_link_item.dart";
 import "package:photos/ui/tabs/shared/quick_link_album_item.dart";
@@ -92,20 +91,20 @@ class _AllLinksPageState extends State<AllLinksPage> {
     if (!_hasSelection) {
       await showErrorDialog(
         context,
-        AppLocalizations.of(context).deleteLinkQuestion,
-        AppLocalizations.of(context).pleaseSelectQuickLinksToRemove,
+        context.strings.deleteLinkQuestion,
+        context.strings.pleaseSelectQuickLinksToRemove,
       );
       return;
     }
     final result = await showAlertBottomSheet<ButtonResult>(
       context,
-      title: AppLocalizations.of(context).removePublicLinks,
-      message: AppLocalizations.of(context).deleteMemoryLinkMessage,
+      title: context.strings.removePublicLinks,
+      message: context.strings.deleteMemoryLinkMessage,
       assetPath: "assets/warning-grey.png",
       buttons: [
         ButtonWidgetV2(
           buttonType: ButtonTypeV2.critical,
-          labelText: AppLocalizations.of(context).remove,
+          labelText: context.strings.remove,
           isInAlert: true,
           buttonAction: ButtonAction.first,
           onTap: _deleteSelectedLinks,
@@ -113,6 +112,7 @@ class _AllLinksPageState extends State<AllLinksPage> {
       ],
     );
     if (result?.action == ButtonAction.error && context.mounted) {
+      if (!mounted) return;
       await showGenericErrorBottomSheet(
         context: context,
         error: result?.exception,
@@ -124,7 +124,7 @@ class _AllLinksPageState extends State<AllLinksPage> {
     for (final link in List<Collection>.of(_selectedQuickLinks)) {
       await CollectionActions(
         CollectionsService.instance,
-      ).trashCollectionKeepingPhotos(link, context);
+      ).trashCollectionKeepingPhotos(link);
       if (!mounted) return;
       setState(() {
         widget.quickLinks.remove(link);
@@ -142,10 +142,14 @@ class _AllLinksPageState extends State<AllLinksPage> {
   }
 
   Future<void> _openMemoryLink(MemoryShare share) async {
+    final title =
+        MemoryShareService.instance.getMemoryShareTitle(share) ??
+        context.strings.memoryLink;
     final deleted = await showMemoryLinkDetailsSheet(
       context,
       shareUrl: share.url,
       shareId: share.id,
+      title: title,
     );
     if (deleted != true || !mounted) return;
     setState(() {
@@ -155,17 +159,16 @@ class _AllLinksPageState extends State<AllLinksPage> {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = getEnteColorScheme(context);
-    final textTheme = getEnteTextTheme(context);
+    final colors = context.componentColors;
     final linkItems = <Object>[...widget.quickLinks, ...widget.memoryShares];
     final hasLinks = linkItems.isNotEmpty;
     final linksCount = widget.quickLinks.length + widget.memoryShares.length;
 
     return Scaffold(
-      backgroundColor: context.componentColors.backgroundBase,
+      backgroundColor: colors.backgroundBase,
       body: AppBarComponent(
-        title: AppLocalizations.of(context).links,
-        subtitle: AppLocalizations.of(context).itemCount(count: linksCount),
+        title: context.strings.links,
+        subtitle: context.strings.itemCount(count: linksCount),
         physics: const BouncingScrollPhysics(),
         actions: [
           AnimatedSwitcher(
@@ -173,12 +176,13 @@ class _AllLinksPageState extends State<AllLinksPage> {
             switchInCurve: Curves.easeOut,
             switchOutCurve: Curves.easeIn,
             child: _hasSelection
-                ? SoftIconButton(
+                ? IconButtonComponent(
                     key: const ValueKey("delete_links"),
+                    variant: IconButtonComponentVariant.primary,
+                    shouldSurfaceExecutionStates: false,
                     icon: HugeIcon(
                       icon: HugeIcons.strokeRoundedDelete01,
-                      size: 18,
-                      color: colorScheme.warning500,
+                      color: colors.warning,
                     ),
                     onTap: _removeSelectedLinks,
                   )
@@ -220,7 +224,7 @@ class _AllLinksPageState extends State<AllLinksPage> {
                   final share = item as MemoryShare;
                   final title =
                       MemoryShareService.instance.getMemoryShareTitle(share) ??
-                      AppLocalizations.of(context).memoryLink;
+                      context.strings.memoryLink;
                   return MemoryLinkAlbumItem(
                     title: title,
                     fileCount: share.fileCount,
@@ -236,7 +240,7 @@ class _AllLinksPageState extends State<AllLinksPage> {
                     onLongPress: () => _toggleMemoryShareSelection(share),
                   );
                 },
-                separatorBuilder: (_, __) => const SizedBox(height: 8),
+                separatorBuilder: (_, _) => const SizedBox(height: 8),
               ),
             ),
             const SliverToBoxAdapter(child: SizedBox(height: 24)),
@@ -244,15 +248,9 @@ class _AllLinksPageState extends State<AllLinksPage> {
           if (!hasLinks)
             SliverFillRemaining(
               hasScrollBody: false,
-              child: Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(32),
-                  child: Text(
-                    AppLocalizations.of(context).noLinksYet,
-                    style: textTheme.bodyMuted,
-                    textAlign: TextAlign.center,
-                  ),
-                ),
+              child: EmptyStateComponent(
+                assetPath: "assets/empty_state_links.png",
+                title: context.strings.activeLinksWillShowUpHere,
               ),
             ),
         ],

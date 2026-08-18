@@ -4,7 +4,6 @@ import "package:ente_pure_utils/ente_pure_utils.dart";
 import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
 import "package:logging/logging.dart";
-import "package:photos/core/constants.dart";
 import "package:photos/core/event_bus.dart";
 import "package:photos/events/files_updated_event.dart";
 import "package:photos/events/people_changed_event.dart";
@@ -13,6 +12,7 @@ import "package:photos/events/tab_changed_event.dart";
 import "package:photos/models/search/search_result.dart";
 import "package:photos/models/search/search_types.dart";
 import "package:photos/services/search_service.dart";
+import "package:photos/ui/viewer/search_tab/search_tab_preview_limits.dart";
 
 class AllSectionsExamplesData {
   final List<List<SearchResult>> sectionResults;
@@ -26,7 +26,13 @@ class AllSectionsExamplesData {
 
 class AllSectionsExamplesProvider extends StatefulWidget {
   final Widget child;
-  const AllSectionsExamplesProvider({super.key, required this.child});
+  final SearchTabPreviewLimits previewLimits;
+
+  const AllSectionsExamplesProvider({
+    super.key,
+    required this.child,
+    required this.previewLimits,
+  });
 
   @override
   State<AllSectionsExamplesProvider> createState() =>
@@ -35,12 +41,8 @@ class AllSectionsExamplesProvider extends StatefulWidget {
 
 class _AllSectionsExamplesProviderState
     extends State<AllSectionsExamplesProvider> {
-  //Some section results in [allSectionsExamplesFuture] can be out of sync
-  //with what is displayed on UI. This happens when some section is
-  //independently listening to some set of events and is rebuilt. Sections
-  //can listen to a list of events and rebuild (see sectionUpdateEvents()
-  //in search_types.dart) and new results will not reflect in
-  //[allSectionsExamplesFuture] unless reloadAllSections() is called.
+  // Sections refresh independently, so their displayed results can be newer
+  // than this aggregate until reloadAllSections runs.
   Future<AllSectionsExamplesData> allSectionsExamplesFuture = Future.value(
     const AllSectionsExamplesData(
       sectionResults: [],
@@ -68,7 +70,7 @@ class _AllSectionsExamplesProviderState
   @override
   void initState() {
     super.initState();
-    //add all common events for all search sections to reload to here.
+    // Reload the aggregate for events shared by every search section.
     _filesUpdatedEvent = Bus.instance.on<FilesUpdatedEvent>().listen((event) {
       onDataUpdate();
     });
@@ -133,7 +135,7 @@ class _AllSectionsExamplesProviderState
             allSectionsExamples.add(Future.value([]));
           } else {
             allSectionsExamples.add(
-              sectionType.getData(context, limit: kSearchSectionLimit),
+              sectionType.getData(context, limit: _fetchLimitFor(sectionType)),
             );
           }
         }
@@ -159,6 +161,15 @@ class _AllSectionsExamplesProviderState
   void _cancelInitialLoadTimer() {
     _initialLoadTimer?.cancel();
     _initialLoadTimer = null;
+  }
+
+  int _fetchLimitFor(SectionType sectionType) {
+    return switch (sectionType) {
+      SectionType.face => widget.previewLimits.faceFetchLimit,
+      SectionType.magic => widget.previewLimits.magicFetchLimit,
+      SectionType.location => widget.previewLimits.locationFetchLimit,
+      _ => 0,
+    };
   }
 
   @override

@@ -13,10 +13,10 @@ import "model.dart";
 
 class FlagService {
   static const int _commentsFlag = 1 << 1;
-  static const int _backupOptionsFlag = 1 << 2;
   static const int _videoStreamingFlag = 1 << 3;
-  static const int _cfUploadWorkerRolloutPercent = 10;
-  static const int _rustMlRolloutPercent = 70;
+  static const int _castSessionsV2Flag = 1 << 5;
+  static const int _librarySharingFlag = 1 << 7;
+  static const int _cfUploadWorkerRolloutPercent = 20;
 
   static const String _userIdKey = "user_id";
 
@@ -48,11 +48,17 @@ class FlagService {
 
   bool get disableCFWorker => flags.disableCFWorker;
 
-  /// Returns true if the user is an internal user, respecting the debug toggle.
   bool get internalUser {
     final isDisabled = _prefs.getBool("ls.internal_user_disabled") ?? false;
     return (flags.internalUser || kDebugMode) && !isDisabled;
   }
+
+  bool get largeBackupStandby => internalUser;
+
+  bool get librarySharing =>
+      internalUser || _isServerFlagEnabled(_librarySharingFlag);
+
+  bool get webGPUEnabled => true;
 
   bool get cloudflareUploadWorker =>
       internalUser || _isInUserRollout(_cfUploadWorkerRolloutPercent);
@@ -60,8 +66,6 @@ class FlagService {
   bool get betaUser => flags.betaUser;
 
   bool get internalOrBetaUser => internalUser || betaUser;
-
-  bool get enableContact => internalUser;
 
   bool get enableStripe => Platform.isIOS ? false : flags.enableStripe;
 
@@ -89,11 +93,6 @@ class FlagService {
 
   bool get useNativeVideoEditor => true;
 
-  bool get enableOnlyBackupFuturePhotos =>
-      internalUser || _isServerFlagEnabled(_backupOptionsFlag);
-
-  bool get resetSplitReason => internalUser;
-
   bool get facesTimeline => true;
   bool get ritualsFlag => true;
 
@@ -110,13 +109,7 @@ class FlagService {
 
   bool get enableMemoryShareLink => true;
 
-  bool get useRustForML =>
-      internalUser || _isInUserRollout(_rustMlRolloutPercent);
-
-  bool get enableMLInBackground =>
-      internalUser || _isInUserRollout(_rustMlRolloutPercent);
-
-  bool get useRustForFaceThumbnails => true;
+  bool get enableMLInBackground => true;
 
   bool get useRustForHeicDecoder => internalUser;
 
@@ -131,6 +124,9 @@ class FlagService {
   bool get syncRecoveryDiagnostics => internalUser;
 
   bool get mLHydrationStaleFileRecovery => internalUser;
+
+  bool get enableMultiCast =>
+      internalUser || _isServerFlagEnabled(_castSessionsV2Flag);
 
   Future<void> tryRefreshFlags() async {
     try {

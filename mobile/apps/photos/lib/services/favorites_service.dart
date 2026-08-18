@@ -43,8 +43,7 @@ class FavoritesService {
               _cachedFavoritesCollectionID != null &&
               _cachedFavoritesCollectionID == event.collectionID) {
             if (event.type == EventType.addedOrUpdated) {
-              // Note: This source check is a ugly hack because currently we
-              // don't have any event type related to remove from collection
+              // There is no collection-removal event; the source identifies it.
               final bool isAdded = !event.source.contains("remove");
               _updateFavoriteFilesCache(event.updatedFiles, favFlag: isAdded);
             } else if (event.type == EventType.deletedFromEverywhere ||
@@ -82,6 +81,9 @@ class FavoritesService {
 
   void clearCache() {
     _cachedFavoritesCollectionID = null;
+    _cachedFavUploadedIDs.clear();
+    _cachedFavFileHases.clear();
+    _cachedPendingLocalIDs.clear();
   }
 
   bool isFavoriteCache(EnteFile file, {bool checkOnlyAlbum = false}) {
@@ -133,10 +135,6 @@ class FavoritesService {
           hashes[file.hash!] = file.uploadedFileID!;
         }
       } else if (file.localID != null || file.localID != "") {
-        /* Note: Favorite un-uploaded files
-        For such files, as we don't have uploaded IDs yet, we will cache
-        cache the local ID for showing the fav icon in the gallery
-         */
         localIDs.add(file.localID!);
       }
     }
@@ -182,7 +180,7 @@ class FavoritesService {
     } else {
       final Collection? favCollection = await getFavoritesCollection();
       await _collectionActions.moveFilesFromCurrentCollection(
-        context,
+        null,
         favCollection!,
         files,
       );
@@ -217,7 +215,7 @@ class FavoritesService {
         );
       }
       await _collectionActions.moveFilesFromCurrentCollection(
-        context,
+        null,
         favCollection,
         [favFile],
       );

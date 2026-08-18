@@ -7,6 +7,26 @@ description: Release notes of recent updates to Ensu
 
 A short summary list of changes to the Ensu mobile and desktop apps. For a more descriptive list with screenshots and blog post links, see the [news](https://ente.com/news).
 
+## v0.1.19 - Aug 2026
+
+- Fixed an issue that prevented Gemma models from downloading.
+
+## v0.1.18 - Aug 2026
+
+- Ensu Packs on Mobile - Add on knowledge packs for more accurate answers
+- Under the hood improvements for better download management
+- Chat responses are now GPU-accelerated on Linux via Vulkan. Thanks @bjorn!
+- Fixed the desktop icon on Fedora. Thanks @fosszil!
+- Faster replies in ongoing chats with a best-effort KV cache.
+
+## v0.1.17 - Jun 2026
+
+- Fixed the desktop app version shown in settings.
+- Updated JNA library to satisfy Android's 16 KB page size requirement.
+- Added support for dragging and dropping images into desktop chat attachments.
+- Migrated the desktop app to Tauri v2.
+- Added a mobile device memory check to disable local chat on devices with less than 4 GB of RAM
+
 ## v0.1.16 - May 2026
 
 - Added Gemma 4 for the desktop app.

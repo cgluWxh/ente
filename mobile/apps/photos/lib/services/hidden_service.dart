@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:collection/collection.dart';
 import 'package:ente_crypto/ente_crypto.dart';
+import "package:ente_strings/ente_strings.dart";
 import 'package:flutter/material.dart';
 import 'package:logging/logging.dart';
 import "package:photos/core/configuration.dart";
@@ -13,7 +14,6 @@ import 'package:photos/events/files_updated_event.dart';
 import 'package:photos/events/local_photos_updated_event.dart';
 import 'package:photos/gateways/collections/models/create_request.dart';
 import "package:photos/gateways/collections/models/metadata.dart";
-import "package:photos/generated/l10n.dart";
 import 'package:photos/models/collection/action.dart';
 import 'package:photos/models/collection/collection.dart';
 import 'package:photos/models/file/file.dart';
@@ -23,7 +23,6 @@ import 'package:photos/services/collections_service.dart';
 import 'package:photos/ui/notification/toast.dart';
 import 'package:photos/utils/dialog_util.dart';
 
-/// Represents a file that needs to be cleaned up from a non-hidden collection.
 class HiddenCleanupItem {
   final EnteFile file;
   final int nonHiddenCollectionID;
@@ -51,16 +50,10 @@ class HiddenCleanupItem {
     return collection?.isOwner(userID) ?? false;
   }
 
-  /// Returns true if this item should be acted upon (cleaned up).
-  /// An item is actionable if the user owns the non-hidden collection.
   bool get isActionable => isNonHiddenCollectionOwnedByUser;
 
-  /// Returns the collection ID to move from.
   int get fromCollectionID => nonHiddenCollectionID;
 
-  /// Returns the collection ID to move to.
-  /// Uses the original hidden collection if owned by user,
-  /// otherwise uses the user's default hidden collection.
   int get toCollectionID {
     if (isHiddenCollectionOwnedByUser) {
       return hiddenCollectionID;
@@ -104,7 +97,6 @@ extension HiddenService on CollectionsService {
   Future<Collection> clubAllDefaultHiddenToOne(
     List<Collection> allDefaultHidden,
   ) async {
-    // select first collection as default hidden where all files will be clubbed
     final Collection defaultHidden = allDefaultHidden.first;
     for (Collection hidden in allDefaultHidden) {
       try {
@@ -135,8 +127,6 @@ extension HiddenService on CollectionsService {
     return defaultHidden;
   }
 
-  // getUncategorizedCollection will return the uncategorized collection
-  // for the given user
   Future<Collection> getUncategorizedCollection() async {
     if (cachedUncategorizedCollection != null) {
       return cachedUncategorizedCollection!;
@@ -202,8 +192,8 @@ extension HiddenService on CollectionsService {
           continue;
         }
 
-        // Determine destination: files from hidden collections go to default
-        // hidden collection, others go to uncategorized
+        // Files removed from hidden collections stay hidden; others move to
+        // Uncategorized.
         final Collection? sourceCollection = getCollectionByID(collectionID);
         final bool isSourceHidden = sourceCollection?.isHidden() ?? false;
         final int destinationCollectionID;
@@ -260,8 +250,6 @@ extension HiddenService on CollectionsService {
           continue;
         }
         final Collection? c = getCollectionByID(entry.key);
-        // if the collection is not owned by the user, remove the file from the
-        // collection
         if (c != null && !c.isOwner(userID)) {
           await removeFromCollection(entry.key, entry.value);
         } else {
@@ -283,17 +271,15 @@ extension HiddenService on CollectionsService {
       await dialog.hide();
     } on AssertionError catch (e) {
       await dialog.hide();
+      if (!context.mounted) return false;
       unawaited(
-        showErrorDialog(
-          context,
-          AppLocalizations.of(context).oops,
-          e.message as String,
-        ),
+        showErrorDialog(context, context.strings.oops, e.message as String),
       );
       return false;
     } catch (e, s) {
       _logger.severe("Could not hide", e, s);
       await dialog.hide();
+      if (!context.mounted) return false;
       await showGenericErrorDialog(context: context, error: e);
       return false;
     } finally {
@@ -399,8 +385,6 @@ extension HiddenService on CollectionsService {
     return createRequest;
   }
 
-  /// Returns true if there are hidden files with local copies on device.
-  /// Uses an efficient LIMIT 1 query instead of loading all files.
   Future<bool> hasHiddenFilesOnDevice() async {
     final userID = config.getUserID();
     if (userID == null) {
@@ -413,9 +397,6 @@ extension HiddenService on CollectionsService {
     return filesDB.hasHiddenFilesWithLocalCopy(hiddenCollectionIds, userID);
   }
 
-  /// Gets hidden files that have local copies, deduplicated by uploadedFileID.
-  /// Only returns files owned by the current user from any hidden collection
-  /// (owned or shared).
   Future<List<EnteFile>> getHiddenFilesOnDevice() async {
     final userID = config.getUserID();
     if (userID == null) {
@@ -428,8 +409,6 @@ extension HiddenService on CollectionsService {
     return filesDB.getHiddenFilesWithLocalCopy(hiddenCollectionIds, userID);
   }
 
-  /// Checks if there are hidden files that also exist in non-hidden collections.
-  /// Only considers files owned by the user.
   Future<bool> hasFilesNeedingHiddenCleanup() async {
     final int userID = config.getUserID()!;
     final hiddenCollectionIds = getHiddenCollectionIds();
@@ -448,7 +427,6 @@ extension HiddenService on CollectionsService {
     final allCollectionIdsHiddenFilesExistsIn = await filesDB
         .getCollectionIDsForUploadedFileIDs(uploadedHiddenFileIds);
 
-    // Check if any collection is non-hidden
     for (final collectionId in allCollectionIdsHiddenFilesExistsIn) {
       if (hiddenCollectionIds.contains(collectionId)) {
         continue;
@@ -463,8 +441,6 @@ extension HiddenService on CollectionsService {
     return false;
   }
 
-  /// Gets the list of files that need to be cleaned up from non-hidden
-  /// collections. Only processes files owned by the user.
   Future<List<HiddenCleanupItem>> getFilesNeedingHiddenCleanup() async {
     final int userID = config.getUserID()!;
     final hiddenCollectionIds = getHiddenCollectionIds();
@@ -484,14 +460,12 @@ extension HiddenService on CollectionsService {
       uploadedHiddenFileIds,
     );
 
-    // Build map of uploadedFileID -> hiddenCollectionID
     final Map<int, int> fileToHiddenCollection = {};
     for (final entry in filesByCollectionID.entries) {
       final collectionID = entry.key;
       if (hiddenCollectionIds.contains(collectionID)) {
         for (final file in entry.value) {
           if (file.uploadedFileID != null) {
-            // Store first hidden collection found for each file
             fileToHiddenCollection.putIfAbsent(
               file.uploadedFileID!,
               () => collectionID,
@@ -501,7 +475,6 @@ extension HiddenService on CollectionsService {
       }
     }
 
-    // Create cleanup items for non-hidden collections
     final cleanupItems = <HiddenCleanupItem>[];
     for (final entry in filesByCollectionID.entries) {
       final collectionID = entry.key;
@@ -516,14 +489,13 @@ extension HiddenService on CollectionsService {
       }
 
       for (final file in entry.value) {
-        // Files are already filtered by ownerID at DB level, but double-check
         if (file.ownerID != userID) {
           continue;
         }
 
         final hiddenCollectionID = fileToHiddenCollection[file.uploadedFileID];
         if (hiddenCollectionID == null) {
-          continue; // Shouldn't happen
+          continue;
         }
 
         cleanupItems.add(
@@ -539,18 +511,8 @@ extension HiddenService on CollectionsService {
     return cleanupItems;
   }
 
-  /// Cleans up hidden files by moving them from non-hidden collections to their
-  /// hidden collection.
-  /// Only own files are processed.
-  /// For files whose hidden collection is owned by the user,
-  /// they are moved back to their original hidden collection.
-  /// For files whose hidden collection is not owned by the user,
-  /// they are moved to the user's default hidden collection.
   Future<void> cleanupHiddenFiles(BuildContext context) async {
-    final dialog = createProgressDialog(
-      context,
-      AppLocalizations.of(context).pleaseWait,
-    );
+    final dialog = createProgressDialog(context, context.strings.pleaseWait);
     await dialog.show();
 
     try {
@@ -575,14 +537,12 @@ extension HiddenService on CollectionsService {
         );
       }
 
-      // Group actionable items by (fromCollectionID, toCollectionID) for batch moves
       final Map<(int, int), List<EnteFile>> moveGroups = {};
       for (final item in actionableItems) {
         final key = (item.fromCollectionID, item.toCollectionID);
         moveGroups.putIfAbsent(key, () => []).add(item.file);
       }
 
-      // Execute moves
       for (final entry in moveGroups.entries) {
         final (fromCollectionID, toCollectionID) = entry.key;
         final files = entry.value;
@@ -594,7 +554,6 @@ extension HiddenService on CollectionsService {
         );
       }
 
-      // Fire events for UI refresh
       final allMovedFiles = actionableItems.map((e) => e.file).toList();
       if (allMovedFiles.isNotEmpty) {
         Bus.instance.fire(
@@ -603,10 +562,12 @@ extension HiddenService on CollectionsService {
       }
 
       await dialog.hide();
-      showShortToast(context, AppLocalizations.of(context).cleanupComplete);
+      if (!context.mounted) return;
+      showShortToast(context, context.strings.cleanupComplete);
     } catch (e, s) {
       _logger.severe("Failed to cleanup hidden files", e, s);
       await dialog.hide();
+      if (!context.mounted) return;
       await showGenericErrorDialog(context: context, error: e);
     }
   }

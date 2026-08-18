@@ -4,32 +4,30 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/sirupsen/logrus"
 	"net/http"
 	"strconv"
+	"strings"
 
-	"github.com/ente-io/museum/ente/jwt"
-	"github.com/ente-io/museum/pkg/utils/network"
+	"github.com/ente/museum/ente"
+	"github.com/ente/museum/ente/jwt"
+	"github.com/ente/museum/pkg/controller/authsession"
+	"github.com/ente/museum/pkg/utils/network"
+	"github.com/sirupsen/logrus"
 
-	"github.com/ente-io/museum/pkg/controller/user"
-	"github.com/ente-io/museum/pkg/repo"
-	"github.com/ente-io/museum/pkg/utils/auth"
+	"github.com/ente/museum/pkg/controller/user"
+	"github.com/ente/museum/pkg/repo"
+	"github.com/ente/museum/pkg/utils/auth"
 	"github.com/gin-gonic/gin"
 	"github.com/patrickmn/go-cache"
 	"github.com/spf13/viper"
 )
 
-// AuthMiddleware intercepts and authenticates incoming requests
 type AuthMiddleware struct {
 	UserAuthRepo   *repo.UserAuthRepository
 	Cache          *cache.Cache
 	UserController *user.UserController
 }
 
-// TokenAuthMiddleware returns a middle ware that extracts the `X-AuthToken`
-// within the header of a request and uses it to authenticate and insert the
-// authenticated user to the request's `X-Auth-User-ID` field.
-// If isJWT is true we use JWT token validation
 func (m *AuthMiddleware) TokenAuthMiddleware(jwtClaimScope *jwt.ClaimScope) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		token := auth.GetToken(c)
@@ -38,59 +36,84 @@ func (m *AuthMiddleware) TokenAuthMiddleware(jwtClaimScope *jwt.ClaimScope) gin.
 			return
 		}
 		app := auth.GetApp(c)
-		cacheKey := fmt.Sprintf("%s:%s", app, token)
-		isJWT := false
-		if jwtClaimScope != nil {
-			isJWT = true
-			cacheKey = fmt.Sprintf("%s:%s:%s", app, token, *jwtClaimScope)
-		}
-		userID, found := m.Cache.Get(cacheKey)
-		var err error
-		if !found {
-			if isJWT {
-				claim, claimErr := m.UserController.ValidateJWTToken(token, *jwtClaimScope)
-				if claimErr != nil {
-					err = claimErr
-				} else {
-					userID = claim.UserID
-				}
-			} else {
-				var isExpired bool
-				userID, isExpired, err = m.UserAuthRepo.GetUserIDWithToken(token, app)
-				if err != nil && !errors.Is(err, sql.ErrNoRows) {
-					logrus.Errorf("Failed to validate token: %s", err)
-					c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "failed to validate token"})
-					return
-				}
-				if isExpired {
-					logrus.Warningf("User token expired: %d", userID)
-					c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "token expired"})
-					return
-				}
+		var userID int64
+		if jwtClaimScope == nil {
+			var expired, cached bool
+			var err error
+			userID, expired, cached, err = authsession.Authenticate(m.UserAuthRepo, m.Cache, token, app)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				logrus.Errorf("Failed to validate token: %s", err)
+				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "failed to validate token"})
+				return
 			}
 			if err != nil {
 				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
 				return
 			}
-			if !isJWT {
+			if expired {
+				logrus.Warningf("User token expired: %d", userID)
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "token expired"})
+				return
+			}
+			if !cached {
 				ip := network.GetClientIP(c)
 				userAgent := c.Request.UserAgent()
 				// skip updating last used for requests routed via CF worker
 				if !network.IsCFWorkerIP(ip) {
 					go func() {
-						_ = m.UserAuthRepo.UpdateLastUsedAt(userID.(int64), token, ip, userAgent)
+						_ = m.UserAuthRepo.UpdateLastUsedAt(userID, token, ip, userAgent)
 					}()
 				}
 			}
-			m.Cache.Set(cacheKey, userID, cache.DefaultExpiration)
+		} else {
+			cacheKey := fmt.Sprintf("%s:%s:%s", app, token, *jwtClaimScope)
+			cachedUserID, found := m.Cache.Get(cacheKey)
+			if found {
+				userID = cachedUserID.(int64)
+			} else {
+				claim, err := m.UserController.ValidateJWTToken(token, *jwtClaimScope)
+				if err != nil {
+					c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+					return
+				}
+				userID = claim.UserID
+				m.Cache.Set(cacheKey, userID, cache.DefaultExpiration)
+			}
 		}
-		c.Request.Header.Set("X-Auth-User-ID", strconv.FormatInt(userID.(int64), 10))
+		c.Request.Header.Set("X-Auth-User-ID", strconv.FormatInt(userID, 10))
+		c.Set(auth.AppContextKey, app)
 		c.Next()
 	}
 }
 
-// AdminAuthMiddleware returns a middle ware that extracts the `userID` added by the TokenAuthMiddleware
-// within the header of a request and uses it to check admin status
+func (m *AuthMiddleware) TokenOrJWTAuthMiddleware(jwtClaimScope jwt.ClaimScope) gin.HandlerFunc {
+	userAuth := m.TokenAuthMiddleware(nil)
+	jwtAuth := m.TokenAuthMiddleware(jwtClaimScope.Ptr())
+
+	return func(c *gin.Context) {
+		if strings.Contains(auth.GetToken(c), ".") {
+			jwtAuth(c)
+		} else {
+			userAuth(c)
+		}
+	}
+}
+
+func RejectAuthApp() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		app, ok := auth.GetAuthenticatedApp(c)
+		if !ok {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing authenticated app"})
+			return
+		}
+		if app == ente.Auth {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "invalid app for endpoint"})
+			return
+		}
+		c.Next()
+	}
+}
+
 // NOTE: Should be added after TokenAuthMiddleware middleware
 func (m *AuthMiddleware) AdminAuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {

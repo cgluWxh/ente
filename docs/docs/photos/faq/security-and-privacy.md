@@ -148,6 +148,16 @@ Open `Settings > Security > App lock` on mobile, or `Settings > Preferences > Ap
 
 Learn more in the [App lock guide](/photos/features/account/app-lock).
 
+### Can I let someone browse my photos without giving them access to my whole library? {#guest-view}
+
+Yes. Use guest view to hand your phone to someone else and let them browse a single photo, a set of selected photos, or an entire album, without reaching the rest of your library, settings, or actions like edit, share, or delete.
+
+Guest view can only be exited with device authentication (Face Recognition, Fingerprint, or your device passcode/password), so the person can't leave guest view on their own.
+
+Guest view is available on mobile only.
+
+Learn more in the [Guest view guide](/photos/features/utilities/guest-view).
+
 ### Can I contact support using PGP? {#support-pgp}
 
 Yes. You can send encrypted messages to [pgp@ente.com](mailto:pgp@ente.com). The public key is published on [openpgp.org](https://keys.openpgp.org/) and is also available at [ente.com/pgp/pgp.asc](https://ente.com/pgp/pgp.asc). The fingerprint is `D71B F781 998B 4AED 01A2  0AF6 02BD D83A 56EA 68E2`.
@@ -214,7 +224,7 @@ Ente's servers cannot see your location tags or where your photos were taken. Al
 
 You can delete your account at any time by using the "Delete account" option in the settings. For security reasons, we request you to delete your account on your own instead of contacting support to ask them to delete your account.
 
-Note that both Ente Photos and Ente Auth data will be deleted when you delete your account (irrespective of which app you delete it from) since both photos and auth use the same underlying account.
+Note that Ente Photos, Ente Auth, and Ente Locker data will be deleted when you delete your account (irrespective of which app you delete it from) since Photos, Auth, and Locker use the same underlying account.
 
 To know details of how your data is deleted, including when you delete your account, please see https://ente.com/blog/how-ente-deletes-data/.
 
@@ -243,4 +253,4 @@ For any security or privacy questions not covered here, please contact our team 
 
 ## Security
 
-If you believe you have found a security vulnerability, please responsibly disclose it by emailing security@ente.com or [using this link](https://github.com/ente-io/ente/security/advisories/new) instead of opening a public issue. We will investigate all legitimate reports. To know more, please see our [security policy](https://github.com/ente-io/ente/blob/main/SECURITY.md).
+If you believe you have found a security vulnerability, please responsibly disclose it by emailing security@ente.com or [using this link](https://github.com/ente/ente/security/advisories/new) instead of opening a public issue. We will investigate all legitimate reports. To know more, please see our [security policy](https://github.com/ente/ente/blob/main/SECURITY.md).

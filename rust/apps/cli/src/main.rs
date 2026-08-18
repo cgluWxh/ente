@@ -9,15 +9,13 @@ use ente_rs::{
 #[tokio::main]
 async fn main() {
     if let Err(e) = run().await {
-        eprintln!("{e}");
+        eprintln!("{}", ente_core::error::chain(&e));
         std::process::exit(1);
     }
 }
 
 async fn run() -> Result<()> {
     env_logger::init();
-
-    ente_core::crypto::init()?;
 
     let config_dir = ente_rs::utils::get_cli_config_dir()?;
     let db_path = config_dir.join("ente.db");

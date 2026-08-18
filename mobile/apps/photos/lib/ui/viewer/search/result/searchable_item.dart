@@ -1,8 +1,9 @@
 import "package:ente_components/ente_components.dart";
 import "package:ente_pure_utils/ente_pure_utils.dart";
+import "package:ente_strings/ente_strings.dart";
 import "package:flutter/material.dart";
+import "package:flutter_svg/flutter_svg.dart";
 import "package:intl/intl.dart";
-import "package:photos/generated/l10n.dart";
 import "package:photos/models/search/generic_search_result.dart";
 import "package:photos/models/search/recent_searches.dart";
 import "package:photos/models/search/search_constants.dart";
@@ -27,10 +28,7 @@ class SearchableItemWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    //The "searchable_item" tag is to remove hero animation between section
-    //examples and searchableItems in 'view all'. Animation should exist between
-    //searchableItems and SearchResultPages, so passing the extra prefix to
-    //SearchResultPage
+    // Use separate hero tags for section examples and "view all" items.
     const additionalPrefix = "searchable_item";
     final heroTagPrefix = additionalPrefix + searchResult.heroTag();
     final colors = context.componentColors;
@@ -88,7 +86,7 @@ class SearchableItemWidget extends StatelessWidget {
           if (snapshot.hasData && snapshot.data! > 0) {
             final noOfMemories = snapshot.data!;
             return Text(
-              AppLocalizations.of(context).memoryCount(
+              context.strings.memoryCount(
                 count: noOfMemories,
                 formattedCount: NumberFormat().format(noOfMemories),
               ),
@@ -112,6 +110,8 @@ class SearchableItemWidget extends StatelessWidget {
 }
 
 class SearchableItemPlaceholder extends StatelessWidget {
+  static const _inviteAsset = "assets/invite_contact.svg";
+
   final SectionType sectionType;
   const SearchableItemPlaceholder(this.sectionType, {super.key});
 
@@ -132,7 +132,14 @@ class SearchableItemPlaceholder extends StatelessWidget {
         ),
         child: Container(
           color: colorScheme.fillFaint,
-          child: Icon(sectionType.getCTAIcon(), color: colorScheme.strokeMuted),
+          child: Center(
+            child: sectionType == SectionType.contacts
+                ? SvgPicture.asset(_inviteAsset, width: 20, height: 20)
+                : Icon(
+                    sectionType.getCTAIcon(),
+                    color: colorScheme.strokeMuted,
+                  ),
+          ),
         ),
       ),
       title: Text(

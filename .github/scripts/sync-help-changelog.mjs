@@ -1,8 +1,5 @@
 #!/usr/bin/env node
 
-// Prepend a release's notes to the help-site changelog. Run by app-release.yml's
-// promote, with the published release body in RELEASE_BODY.
-
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,6 +12,13 @@ const apps = {
     auth: { changelog: "docs/docs/auth/changelog.md", label: undefined },
     locker: { changelog: "docs/docs/locker/changelog.md", label: "mobile" },
     ensu: { changelog: "docs/docs/ensu/changelog.md", label: undefined },
+};
+
+const normalizeReleaseBodyIndent = (body) => {
+    const lines = body.replace(/\r\n?/g, "\n").split("\n");
+    const indents = lines.filter((line) => line.trim()).map((line) => line.match(/^[ \t]*/)[0].length);
+    const indent = indents.length ? Math.min(...indents) : 0;
+    return lines.map((line) => line.slice(indent)).join("\n").trim();
 };
 
 const [app, version] = process.argv.slice(2);
@@ -33,7 +37,7 @@ if (content.includes(`${heading} - `)) {
 }
 
 const date = new Date().toLocaleString("en-US", { month: "short", year: "numeric", timeZone: "UTC" });
-const body = (process.env.RELEASE_BODY ?? "").trim();
+const body = normalizeReleaseBodyIndent(process.env.RELEASE_BODY ?? "");
 const section = `${heading} - ${date}\n\n${body}\n`;
 
 const at = content.search(/^## v/m);

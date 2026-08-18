@@ -3,24 +3,25 @@ import "dart:math";
 
 import "package:ente_components/ente_components.dart";
 import "package:ente_pure_utils/ente_pure_utils.dart";
+import "package:ente_strings/ente_strings.dart";
+import 'package:ente_ui/components/loading_widget.dart';
 import 'package:flutter/material.dart';
 import 'package:logging/logging.dart';
+import 'package:photos/core/configuration.dart';
 import 'package:photos/core/event_bus.dart';
 import 'package:photos/db/device_files_db.dart';
 import 'package:photos/db/files_db.dart';
 import 'package:photos/events/backup_folders_updated_event.dart';
 import 'package:photos/events/local_photos_updated_event.dart';
-import "package:photos/generated/l10n.dart";
 import 'package:photos/models/device_collection.dart';
 import "package:photos/service_locator.dart";
+import "package:photos/settings/local_settings.dart";
 import "package:photos/ui/collections/device/device_folder_list_item.dart";
 import "package:photos/ui/collections/device/device_folder_row_item.dart";
-import 'package:photos/ui/common/loading_widget.dart';
 import 'package:photos/ui/components/searchable_appbar.dart';
 import "package:photos/ui/tabs/albums/empty_states/on_device_empty_state.dart";
 import 'package:photos/ui/viewer/gallery/empty_state.dart';
 import "package:photos/utils/device_collection_sort_util.dart";
-import "package:photos/utils/local_settings.dart";
 
 class DeviceFolderVerticalGridView extends StatefulWidget {
   final Widget? appTitle;
@@ -105,6 +106,7 @@ class DeviceFolderVerticalGridSliver extends StatefulWidget {
 class _DeviceFolderVerticalGridViewBodyState
     extends State<DeviceFolderVerticalGridSliver> {
   static List<DeviceCollection>? _cachedDeviceCollections;
+  static int? _cachedUserID;
 
   StreamSubscription<BackupFoldersUpdatedEvent>? _backupFoldersUpdatedEvent;
   StreamSubscription<LocalPhotosUpdatedEvent>? _localFilesSubscription;
@@ -114,10 +116,6 @@ class _DeviceFolderVerticalGridViewBodyState
     const Duration(milliseconds: 1500),
     executionInterval: const Duration(seconds: 4),
   );
-  /*
-  Aspect ratio 1:1
-  Width changes dynamically with screen width
-  */
   static const maxThumbnailWidth = 224.0;
   static const horizontalPadding = 16.0;
   static const crossAxisSpacing = 8.0;
@@ -144,10 +142,12 @@ class _DeviceFolderVerticalGridViewBodyState
   }
 
   Future<List<DeviceCollection>> _loadDeviceCollections() async {
+    final userID = Configuration.instance.getUserID();
     final deviceCollections = await FilesDB.instance.getDeviceCollections(
       includeCoverThumbnail: true,
     );
     _cachedDeviceCollections = deviceCollections;
+    _cachedUserID = userID;
     return deviceCollections;
   }
 
@@ -180,7 +180,9 @@ class _DeviceFolderVerticalGridViewBodyState
 
     return FutureBuilder<List<DeviceCollection>>(
       future: _deviceCollectionsFuture,
-      initialData: _cachedDeviceCollections,
+      initialData: _cachedUserID == Configuration.instance.getUserID()
+          ? _cachedDeviceCollections
+          : null,
       builder: (context, snapshot) {
         if (snapshot.hasData) {
           List<DeviceCollection> deviceCollections = snapshot.data!.toList();
@@ -214,7 +216,7 @@ class _DeviceFolderVerticalGridViewBodyState
                         : Padding(
                             padding: const EdgeInsets.all(22),
                             child: EmptyState(
-                              text: AppLocalizations.of(context).noResultsFound,
+                              text: context.strings.noResultsFound,
                             ),
                           ),
                   )
@@ -238,9 +240,7 @@ class _DeviceFolderVerticalGridViewBodyState
           return widget.showEmptyState
               ? SliverFillRemaining(
                   child: Center(
-                    child: Text(
-                      AppLocalizations.of(context).failedToLoadAlbums,
-                    ),
+                    child: Text(context.strings.failedToLoadAlbums),
                   ),
                 )
               : const SliverToBoxAdapter(child: SizedBox.shrink());

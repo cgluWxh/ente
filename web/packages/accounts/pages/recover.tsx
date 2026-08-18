@@ -7,8 +7,13 @@ import {
     savedKeyAttributes,
     savedPartialLocalUser,
 } from "ente-accounts/services/accounts-db";
+import { decryptBox } from "ente-accounts/services/crypto";
 import { recoveryKeyFromMnemonic } from "ente-accounts/services/recovery-key";
 import { appHomeRoute, stashRedirect } from "ente-accounts/services/redirect";
+import {
+    haveMasterKeyInSession,
+    saveMasterKeyInSessionAndSafeStore,
+} from "ente-accounts/services/session-storage";
 import type { KeyAttributes } from "ente-accounts/services/user";
 import {
     decryptAndStoreTokenIfNeeded,
@@ -20,22 +25,11 @@ import {
     type SingleInputFormProps,
 } from "ente-base/components/SingleInputForm";
 import { useBaseContext } from "ente-base/context";
-import { decryptBox } from "ente-base/crypto";
 import log from "ente-base/log";
-import {
-    haveMasterKeyInSession,
-    saveMasterKeyInSessionAndSafeStore,
-} from "ente-base/session";
 import { t } from "i18next";
 import { useRouter } from "next/router";
 import { useCallback, useEffect, useState } from "react";
 
-/**
- * A page that allows the user to enter their recovery key to recover their
- * master key if they've forgotten their password.
- *
- * See: [Note: Login pages]
- */
 const Page: React.FC = () => {
     const { showMiniDialog } = useBaseContext();
 

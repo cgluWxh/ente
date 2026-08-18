@@ -4,9 +4,11 @@ import "dart:io";
 import "package:dio/dio.dart";
 import "package:logging/logging.dart";
 import "package:photos/core/configuration.dart";
+import "package:photos/core/network/network.dart";
 
 import "package:photos/module/download/file_url.dart";
 import "package:photos/module/download/task.dart";
+import "package:photos/utils/device_storage_error.dart";
 
 class DownloadManager {
   final _logger = Logger('DownloadManager');
@@ -19,10 +21,8 @@ class DownloadManager {
 
   final Dio _dio;
 
-  // In-memory storage for download tasks
   final Map<int, DownloadTask> _tasks = {};
 
-  // Active downloads with their completers and streams
   final Map<int, Completer<DownloadResult>> _completers = {};
   final Map<int, StreamController<DownloadTask>> _streams = {};
   final Map<int, CancelToken> _cancelTokens = {};
@@ -30,7 +30,6 @@ class DownloadManager {
 
   DownloadManager(this._dio);
 
-  /// Subscribe to download progress updates for a specific file ID
   Stream<DownloadTask> watchDownload(int fileId) {
     _streams[fileId] ??= StreamController<DownloadTask>.broadcast();
     return _streams[fileId]!.stream;
@@ -42,15 +41,12 @@ class DownloadManager {
     return size > downloadChunkSize;
   }
 
-  /// Start download and return a Future that completes when download finishes
-  /// If download was paused, calling this again will resume it
   Future<DownloadResult> download(
     int fileId,
     String filename,
     int totalBytes,
   ) async {
     _downloadStartTimes[fileId] = DateTime.now().microsecondsSinceEpoch;
-    // If already downloading, return existing future
     if (_completers.containsKey(fileId)) {
       return _completers[fileId]!.future;
     }
@@ -58,21 +54,16 @@ class DownloadManager {
     final completer = Completer<DownloadResult>();
     _completers[fileId] = completer;
 
-    // Get or create task
     final existingTask = _tasks[fileId];
     final task =
         existingTask ??
         DownloadTask(id: fileId, filename: filename, totalBytes: totalBytes);
 
-    // Store task in memory
     _tasks[fileId] = task;
 
-    // Don't restart if already completed
     if (task.isCompleted) {
-      // ensure that the file exists
       final filePath = task.filePath;
       if (filePath == null || !(await File(filePath).exists())) {
-        // If the file doesn't exist, mark the task as error
         _logger.warning(
           'File not found for ${task.filename} (${task.bytesDownloaded}/${task.totalBytes} bytes)',
         );
@@ -98,11 +89,9 @@ class DownloadManager {
     return completer.future;
   }
 
-  /// Pause download
   Future<void> pause(int fileId) async {
-    // ignore cancel if download started less than 1 second ago,
-    // this is to avoid cancellination due to different type of video players, where dispose is called
-    // little later after other video player operations
+    // Video player disposal can issue a late pause, so ignore pauses during
+    // the first second.
     final startTime = _downloadStartTimes[fileId];
     if (startTime == null ||
         DateTime.now().microsecondsSinceEpoch - startTime < 1e6) {
@@ -119,7 +108,6 @@ class DownloadManager {
       _updateTask(task.copyWith(status: DownloadStatus.paused));
     }
 
-    // Clean up streams if no listeners
     final stream = _streams[fileId];
     if (stream != null && !stream.hasListener) {
       await stream.close();
@@ -127,7 +115,6 @@ class DownloadManager {
     }
   }
 
-  /// Cancel and delete download
   Future<void> cancel(int fileId) async {
     final token = _cancelTokens[fileId];
     if (token != null && !token.isCancelled) {
@@ -143,10 +130,8 @@ class DownloadManager {
     _cleanup(fileId);
   }
 
-  /// Get current download status
   Future<DownloadTask?> getDownload(int fileId) async => _tasks[fileId];
 
-  /// Get all downloads
   Future<List<DownloadTask>> getAllDownloads() async => _tasks.values.toList();
 
   Future<void> _startDownload(
@@ -163,7 +148,6 @@ class DownloadManager {
       final directory = Configuration.instance.getTempDirectory();
       final basePath = '$directory${task.id}.encrypted';
 
-      // check if base file already exists and is of correct size
       final baseFile = File(basePath);
       if (await baseFile.exists()) {
         final existingSize = await baseFile.length();
@@ -184,11 +168,10 @@ class DownloadManager {
             'Existing file size mismatch for ${task.filename}: '
             'expected ${task.totalBytes}, but got $existingSize',
           );
-          await baseFile.delete(); // Remove corrupted file
+          await baseFile.delete();
         }
       }
 
-      // Check existing chunks and calculate progress
       final totalChunks = (task.totalBytes / downloadChunkSize).ceil();
       final existingChunks = await _validateExistingChunks(
         basePath,
@@ -217,7 +200,7 @@ class DownloadManager {
           _logger.info('Download cancelled for ${task.filename}');
           break;
         }
-        downloadUrl ??= await _resolveDownloadRedirect(task.id, cancelToken);
+        downloadUrl ??= await _resolveDownloadUrl(task.id, cancelToken);
         await _downloadChunk(
           task,
           basePath,
@@ -242,7 +225,6 @@ class DownloadManager {
     } catch (e) {
       if (e is DioException && e.type == DioExceptionType.cancel) {
         _logger.info('Download cancelled for ${task.filename}');
-        // Complete future with current task state (paused or cancelled)
         final currentTask = _tasks[task.id];
         if (currentTask != null && !completer.isCompleted) {
           completer.complete(DownloadResult(currentTask, false));
@@ -251,10 +233,10 @@ class DownloadManager {
       }
       _logger.warning('Error downloading ${task.filename}', e);
       final isNetworkError = _isNetworkError(e);
-      final isStorageError = _isStorageError(e);
+      final isDeviceStorageFull = isDeviceStorageFullError(e);
       final String errorCode = _getErrorCode(e);
       task = task.copyWith(
-        status: isNetworkError || isStorageError
+        status: isNetworkError || isDeviceStorageFull
             ? DownloadStatus.paused
             : DownloadStatus.error,
         error: errorCode,
@@ -352,7 +334,6 @@ class DownloadManager {
         _notifyProgress(updatedTask);
       },
     );
-    // Update progress after chunk completion
     final chunkFileSize = await File(chunkPath).length();
     task = task.copyWith(
       bytesDownloaded: (chunkIndex) * downloadChunkSize + chunkFileSize,
@@ -360,12 +341,23 @@ class DownloadManager {
     _updateTask(task);
   }
 
-  Future<String> _resolveDownloadRedirect(
+  Future<String> _resolveDownloadUrl(
     int fileID,
     CancelToken cancelToken,
   ) async {
+    final signedUrl = await FileUrl.tryGetV3Url(
+      NetworkClient.instance.enteDio,
+      fileID,
+      FileUrlType.directDownload,
+      headers: {"X-Auth-Token": Configuration.instance.getToken()},
+      cancelToken: cancelToken,
+    );
+    if (signedUrl != null) {
+      return signedUrl;
+    }
+
     final response = await _dio.get<void>(
-      FileUrl.getUrl(fileID, FileUrlType.directDownload),
+      FileUrl.getLegacyUrl(fileID, FileUrlType.directDownload),
       options: Options(
         followRedirects: false,
         receiveDataWhenStatusError: false,
@@ -410,7 +402,6 @@ class DownloadManager {
       final finalFile = File(basePath);
       if (await finalFile.exists()) await finalFile.delete();
 
-      // Delete chunk files
       final totalChunks = (task.totalBytes / downloadChunkSize).ceil();
       for (int i = 1; i <= totalChunks; i++) {
         final chunkFile = File(_getChunkPath(basePath, i));
@@ -482,19 +473,8 @@ class DownloadManager {
     return false;
   }
 
-  bool _isStorageError(Object error) {
-    if (error is FileSystemException) {
-      final code = error.osError?.errorCode;
-      return code == 28 || code == 112;
-    }
-    if (error is DioException && error.error != null) {
-      return _isStorageError(error.error!);
-    }
-    return false;
-  }
-
   String _getErrorCode(Object error) {
-    if (_isStorageError(error)) {
+    if (isDeviceStorageFullError(error)) {
       return notEnoughStorageError;
     }
     if (_isNetworkError(error)) {

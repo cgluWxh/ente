@@ -20,8 +20,8 @@ Other useful commands:
 ```sh
 cargo codegen native  # Regenerate bindings used by native apps
 cargo codegen frb     # Regenerate bindings used by Flutter apps
+cargo codegen napi    # Regenerate bindings used by Desktop (Electron) apps
 
-# Starts Docker + runs the E2E tests (ignored by default)
-./e2e/scripts/run.sh
-cargo test -p ente-e2e -- --ignored --nocapture
+# Run integration tests against a local Museum
+cargo test --features museum,ente-ml/ml-assets
 ```

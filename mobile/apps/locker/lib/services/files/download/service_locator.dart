@@ -9,12 +9,11 @@ class ServiceLocator {
   late final Dio nonEnteDio;
   late final PackageInfo packageInfo;
 
-  // instance
   ServiceLocator._privateConstructor();
 
   static final ServiceLocator instance = ServiceLocator._privateConstructor();
 
-  init(
+  void init(
     SharedPreferences prefs,
     Dio enteDio,
     Dio nonEnteDio,

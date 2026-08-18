@@ -31,7 +31,7 @@ Using a VM-local clone avoids host-mount permission differences.
 ```sh
 limactl shell docker /bin/bash -lc '
   cd ~ &&
-  git clone https://github.com/ente-io/ente.git &&
+  git clone https://github.com/ente/ente.git &&
   cd ente
 '
 ```
@@ -71,7 +71,7 @@ limactl shell docker /bin/bash -lc '
     node:24-bookworm \
     bash -lc "
       npm ci &&
-      npm exec --workspace paste -- next dev -p 3008
+      npm exec --workspace paste -- next dev --webpack -p 3008
     "
 '
 ```

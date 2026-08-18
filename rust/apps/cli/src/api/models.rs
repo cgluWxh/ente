@@ -3,8 +3,6 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-// ========== Authentication Models ==========
-
 fn default_email_mfa_enabled() -> bool {
     true
 }
@@ -16,9 +14,9 @@ pub struct SrpAttributes {
     #[serde(rename = "srpSalt")]
     pub srp_salt: String,
     #[serde(rename = "memLimit")]
-    pub mem_limit: i32,
+    pub mem_limit: u32,
     #[serde(rename = "opsLimit")]
-    pub ops_limit: i32,
+    pub ops_limit: u32,
     #[serde(rename = "kekSalt")]
     pub kek_salt: String,
     #[serde(rename = "isEmailMFAEnabled", default = "default_email_mfa_enabled")]
@@ -67,8 +65,8 @@ pub struct KeyAttributes {
     pub public_key: String,
     pub encrypted_secret_key: String,
     pub secret_key_decryption_nonce: String,
-    pub mem_limit: i32,
-    pub ops_limit: i32,
+    pub mem_limit: u32,
+    pub ops_limit: u32,
     pub master_key_encrypted_with_recovery_key: Option<String>,
     pub master_key_decryption_nonce: Option<String>,
     pub recovery_key_encrypted_with_master_key: Option<String>,
@@ -266,8 +264,6 @@ impl fmt::Debug for EnableTwoFactorRequest {
     }
 }
 
-// ========== User Models ==========
-
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UserDetails {
@@ -320,8 +316,6 @@ pub struct FamilyMember {
 pub struct Storage {
     pub used: i64,
 }
-
-// ========== Collection Models ==========
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -387,8 +381,6 @@ pub struct GetCollectionsResponse {
     pub collections: Vec<Collection>,
 }
 
-// ========== File Models ==========
-
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct File {
@@ -453,8 +445,6 @@ pub struct GetFileResponse {
     pub file: File,
 }
 
-// ========== Diff/Sync Models ==========
-
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GetDiffRequest {
@@ -468,8 +458,6 @@ pub struct GetDiffResponse {
     #[serde(rename = "hasMore")]
     pub has_more: bool,
 }
-
-// ========== Download Models ==========
 
 #[derive(Debug, Deserialize)]
 pub struct GetFileUrlResponse {

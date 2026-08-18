@@ -1,14 +1,14 @@
 import 'dart:io';
 
 import 'package:ente_auth/core/configuration.dart';
-import 'package:ente_auth/l10n/l10n.dart';
 import 'package:ente_auth/services/local_backup_service.dart';
 import 'package:ente_auth/services/security_bookmark_service.dart';
 import 'package:ente_auth/theme/ente_theme.dart';
-import 'package:ente_auth/ui/components/buttons/button_widget.dart';
 import 'package:ente_auth/ui/components/dialog_widget.dart';
-import 'package:ente_auth/ui/components/models/button_type.dart';
 import 'package:ente_lock_screen/local_authentication_service.dart';
+import 'package:ente_strings/ente_strings.dart';
+import 'package:ente_ui/components/buttons/button_widget.dart';
+import 'package:ente_ui/components/buttons/models/button_type.dart';
 import 'package:flutter/material.dart';
 import 'package:logging/logging.dart';
 import 'package:path_provider/path_provider.dart';
@@ -131,7 +131,7 @@ class _LocalBackupExperienceState extends State<LocalBackupExperience> {
 
   Future<bool> _startEnableFlow() async {
     final hasPassword = await _ensurePasswordConfigured(disableOnCancel: true);
-    // We only require a password to exist; re-enabling skips re-entry if already set.
+    // Re-enabling skips password re-entry when one is already stored.
     if (!hasPassword) {
       return false;
     }
@@ -143,7 +143,8 @@ class _LocalBackupExperienceState extends State<LocalBackupExperience> {
     if (Platform.isAndroid &&
         (_backupTreeUri == null || _backupTreeUri!.isEmpty) &&
         (_backupPath == null || _backupPath!.isEmpty)) {
-      _showSnackBar(context.l10n.noDefaultBackupFolder);
+      if (!mounted) return false;
+      _showSnackBar(context.strings.noDefaultBackupFolder);
       return false;
     }
 
@@ -179,7 +180,7 @@ class _LocalBackupExperienceState extends State<LocalBackupExperience> {
         return;
       }
 
-      // On iOS/macOS, check if we have a bookmark - if not, we need to re-pick
+      // A saved path is unusable on iOS/macOS without its security bookmark.
       if (Platform.isIOS || Platform.isMacOS) {
         final prefs = await SharedPreferences.getInstance();
         final bookmark = prefs.getString(_iosBookmarkKey);
@@ -188,9 +189,9 @@ class _LocalBackupExperienceState extends State<LocalBackupExperience> {
             '${Platform.operatingSystem}: No bookmark found, need to re-select backup location',
           );
           if (showSnackBar) {
-            _showSnackBar(context.l10n.selectFolderToContinue);
+            if (!mounted) return;
+            _showSnackBar(context.strings.selectFolderToContinue);
           }
-          // Clear the path and prompt user to re-select
           await prefs.remove('autoBackupPath');
           if (mounted) {
             setState(() {
@@ -212,16 +213,18 @@ class _LocalBackupExperienceState extends State<LocalBackupExperience> {
         final success = await LocalBackupService.instance
             .triggerAutomaticBackup(isManual: true);
         if (showSnackBar) {
+          if (!mounted) return;
           _showSnackBar(
             success
-                ? context.l10n.backupCreated
-                : context.l10n.somethingWentWrongPleaseTryAgain,
+                ? context.strings.backupCreated
+                : context.strings.somethingWentWrongPleaseTryAgain,
           );
         }
       } catch (e) {
         _logger.severe('Manual backup failed with error: $e');
         if (showSnackBar) {
-          _showSnackBar(context.l10n.somethingWentWrongPleaseTryAgain);
+          if (!mounted) return;
+          _showSnackBar(context.strings.somethingWentWrongPleaseTryAgain);
         }
       }
     } finally {
@@ -258,8 +261,6 @@ class _LocalBackupExperienceState extends State<LocalBackupExperience> {
       return true;
     }
 
-    // On iOS/macOS, just check if we have a path configured.
-    // Directory creation happens in the backup service with proper scoped access.
     var resolvedPath = _backupPath;
     if (resolvedPath == null || resolvedPath.isEmpty) {
       final saved = await _pickAndSaveBackupLocation(
@@ -271,8 +272,7 @@ class _LocalBackupExperienceState extends State<LocalBackupExperience> {
       }
       resolvedPath = _backupPath;
     }
-    // On iOS/macOS, don't try to create directory here - it requires scoped access
-    // which is handled by the backup service.
+    // The backup service creates iOS/macOS directories with scoped access.
     if (!Platform.isIOS &&
         !Platform.isMacOS &&
         resolvedPath != null &&
@@ -332,8 +332,8 @@ class _LocalBackupExperienceState extends State<LocalBackupExperience> {
   }) async {
     final hasAuthenticated = await _authenticateForBackupAction(
       isUpdateFlow
-          ? context.l10n.authToUpdateBackupPassword
-          : context.l10n.authToSetBackupPassword,
+          ? context.strings.authToUpdateBackupPassword
+          : context.strings.authToSetBackupPassword,
       forceAuthPrompt: true,
     );
     if (!hasAuthenticated) {
@@ -378,7 +378,8 @@ class _LocalBackupExperienceState extends State<LocalBackupExperience> {
       return false;
     }
     await Configuration.instance.clearBackupPassword();
-    _showSnackBar(context.l10n.backupPasswordCleared);
+    if (!mounted) return false;
+    _showSnackBar(context.strings.backupPasswordCleared);
     return true;
   }
 
@@ -411,7 +412,7 @@ class _LocalBackupExperienceState extends State<LocalBackupExperience> {
   Future<String?> _showCustomPasswordDialog({
     required bool isUpdateFlow,
   }) async {
-    final l10n = context.l10n;
+    final l10n = context.strings;
     final textController = TextEditingController();
     bool isPasswordHidden = true;
     String? errorText;
@@ -498,7 +499,7 @@ class _LocalBackupExperienceState extends State<LocalBackupExperience> {
                     Expanded(
                       child: ButtonWidget(
                         buttonType: ButtonType.primary,
-                        labelText: l10n.saveAction,
+                        labelText: l10n.save,
                         isDisabled: textController.text.isEmpty,
                         onTap: () async {
                           if (textController.text.length < 8) {
@@ -527,7 +528,7 @@ class _LocalBackupExperienceState extends State<LocalBackupExperience> {
     }
 
     if (Platform.isIOS) {
-      final l10n = context.l10n;
+      final l10n = context.strings;
       final dialogBody = StringBuffer()
         ..writeln(l10n.backupLocationChoiceDescription)
         ..writeln()
@@ -563,18 +564,18 @@ class _LocalBackupExperienceState extends State<LocalBackupExperience> {
       );
 
       if (result?.action == ButtonAction.second) {
-        // Use our native picker that creates bookmark immediately
         final pickResult = await SecurityBookmarkService.instance
             .pickDirectoryAndCreateBookmark();
+        if (!mounted) return false;
         if (pickResult != null) {
           if (_isInvalidIosPath(pickResult.path)) {
-            _showSnackBar(context.l10n.iosOnMyDeviceNotSupported);
+            _showSnackBar(context.strings.iosOnMyDeviceNotSupported);
             return false;
           }
           return _persistLocationWithBookmark(
             pickResult.path,
             pickResult.bookmark,
-            successMessage: context.l10n.initialBackupCreated,
+            successMessage: context.strings.initialBackupCreated,
           );
         }
       }
@@ -582,24 +583,24 @@ class _LocalBackupExperienceState extends State<LocalBackupExperience> {
     }
 
     if (Platform.isMacOS) {
-      // On macOS, use DirUtils which creates a security-scoped bookmark
       final picked = await DirUtils.instance.pickDirectory();
       if (picked != null && picked.path.isNotEmpty && picked.bookmark != null) {
+        if (!mounted) return false;
         return _persistLocationWithBookmark(
           picked.path,
           picked.bookmark!,
-          successMessage: context.l10n.initialBackupCreated,
+          successMessage: context.strings.initialBackupCreated,
         );
       }
       return false;
     }
 
-    // Other platforms (Windows, Linux, etc.)
     final picked = await DirUtils.instance.pickDirectory();
     if (picked != null && picked.path.isNotEmpty) {
+      if (!mounted) return false;
       return _persistLocation(
         picked.path,
-        successMessage: context.l10n.initialBackupCreated,
+        successMessage: context.strings.initialBackupCreated,
       );
     }
     return false;
@@ -712,55 +713,59 @@ class _LocalBackupExperienceState extends State<LocalBackupExperience> {
       );
       if (saved) {
       } else if (requireSelection) {
-        _showSnackBar(context.l10n.selectFolderToContinue);
+        if (!mounted) return false;
+        _showSnackBar(context.strings.selectFolderToContinue);
       }
       return saved;
     } else if (Platform.isIOS) {
-      // On iOS, use our native picker that creates bookmark immediately
       final result = await SecurityBookmarkService.instance
           .pickDirectoryAndCreateBookmark();
       if (result != null) {
         if (_isInvalidIosPath(result.path)) {
-          _showSnackBar(context.l10n.iosOnMyDeviceNotSupported);
+          if (!mounted) return false;
+          _showSnackBar(context.strings.iosOnMyDeviceNotSupported);
           return false;
         }
+        if (!mounted) return false;
         final saved = await _persistLocationWithBookmark(
           result.path,
           result.bookmark,
           successMessage:
-              successMessage ?? context.l10n.locationUpdatedAndBackupCreated,
+              successMessage ?? context.strings.locationUpdatedAndBackupCreated,
         );
         return saved;
       }
       if (requireSelection) {
-        _showSnackBar(context.l10n.selectFolderToContinue);
+        if (!mounted) return false;
+        _showSnackBar(context.strings.selectFolderToContinue);
       }
       return false;
     } else if (Platform.isMacOS) {
-      // On macOS, use DirUtils which creates a security-scoped bookmark
       final picked = await DirUtils.instance.pickDirectory();
       if (picked != null && picked.path.isNotEmpty && picked.bookmark != null) {
+        if (!mounted) return false;
         final saved = await _persistLocationWithBookmark(
           picked.path,
           picked.bookmark!,
           successMessage:
-              successMessage ?? context.l10n.locationUpdatedAndBackupCreated,
+              successMessage ?? context.strings.locationUpdatedAndBackupCreated,
         );
         return saved;
       }
       if (requireSelection) {
-        _showSnackBar(context.l10n.selectFolderToContinue);
+        if (!mounted) return false;
+        _showSnackBar(context.strings.selectFolderToContinue);
       }
       return false;
     } else {
-      // Other platforms (Windows, Linux, etc.)
       final picked = await DirUtils.instance.pickDirectory();
 
       if (picked != null && picked.path.isNotEmpty) {
+        if (!mounted) return false;
         final saved = await _persistLocation(
           picked.path,
           successMessage:
-              successMessage ?? context.l10n.locationUpdatedAndBackupCreated,
+              successMessage ?? context.strings.locationUpdatedAndBackupCreated,
         );
         if (saved) {
           if (shouldTriggerBackup) {
@@ -772,13 +777,13 @@ class _LocalBackupExperienceState extends State<LocalBackupExperience> {
         return saved;
       }
       if (requireSelection) {
-        _showSnackBar(context.l10n.selectFolderToContinue);
+        if (!mounted) return false;
+        _showSnackBar(context.strings.selectFolderToContinue);
       }
       return false;
     }
   }
 
-  /// iOS/macOS: Persist location with pre-created bookmark
   Future<bool> _persistLocationWithBookmark(
     String path,
     String bookmark, {
@@ -789,7 +794,6 @@ class _LocalBackupExperienceState extends State<LocalBackupExperience> {
     final pickedDir = PickedDirectory(path: path, bookmark: bookmark);
 
     try {
-      // Start accessing using the bookmark
       final accessResult = await dirUtils.startAccess(pickedDir);
       if (accessResult == null || !accessResult.success) {
         _logger.severe(
@@ -799,7 +803,6 @@ class _LocalBackupExperienceState extends State<LocalBackupExperience> {
       }
 
       try {
-        // Write backup directly to the selected directory
         await LocalBackupService.instance.writeBackupToDirectory(path);
       } finally {
         await dirUtils.stopAccess(pickedDir);
@@ -834,15 +837,12 @@ class _LocalBackupExperienceState extends State<LocalBackupExperience> {
     Future<bool> savePath(String target) async {
       try {
         if (Platform.isIOS || Platform.isMacOS) {
-          // On iOS/macOS, use native picker with bookmark via _persistLocationWithBookmark.
-          // This path is only for non-native picker which won't have scoped access.
           _logger.warning(
             '${Platform.operatingSystem}: _persistLocation called without bookmark. '
             'Use native picker for ${Platform.operatingSystem}.',
           );
           return false;
         } else {
-          // Non-iOS: just save the path directly
           await Directory(target).create(recursive: true);
           await prefs.setString('autoBackupPath', target);
           await prefs.remove(_treeUriKey);
@@ -880,7 +880,8 @@ class _LocalBackupExperienceState extends State<LocalBackupExperience> {
     }
 
     _logger.warning('All backup path options failed for: $path');
-    _showSnackBar(context.l10n.noDefaultBackupFolder);
+    if (!mounted) return false;
+    _showSnackBar(context.strings.noDefaultBackupFolder);
     return false;
   }
 
@@ -922,10 +923,12 @@ class _LocalBackupExperienceState extends State<LocalBackupExperience> {
       if (shouldTriggerBackup) {
         final backupSuccess = await LocalBackupService.instance
             .triggerAutomaticBackup(isManual: true);
+        if (!mounted) return false;
         _showSnackBar(
           backupSuccess
-              ? (successMessage ?? context.l10n.locationUpdatedAndBackupCreated)
-              : context.l10n.somethingWentWrongPleaseTryAgain,
+              ? (successMessage ??
+                    context.strings.locationUpdatedAndBackupCreated)
+              : context.strings.somethingWentWrongPleaseTryAgain,
         );
         return backupSuccess;
       }
@@ -934,7 +937,8 @@ class _LocalBackupExperienceState extends State<LocalBackupExperience> {
       }
       return true;
     } catch (_) {
-      _showSnackBar(context.l10n.noDefaultBackupFolder);
+      if (!mounted) return false;
+      _showSnackBar(context.strings.noDefaultBackupFolder);
       return false;
     }
   }
@@ -961,16 +965,11 @@ class _LocalBackupExperienceState extends State<LocalBackupExperience> {
     ).showSnackBar(SnackBar(content: Text(message)));
   }
 
-  /// Check if the selected iOS path is the device root ("On My iPhone").
-  ///
-  /// "On My iPhone" root cannot store files directly - user must select
-  /// or create a folder inside it. Only the actual iOS File Provider Storage
-  /// root (AppGroup/UUID/File Provider Storage) is invalid.
+  // The "On My iPhone" root cannot store files; require a subfolder.
   bool _isInvalidIosPath(String path) {
     if (!Platform.isIOS) return false;
     if (path.isEmpty) return true;
 
-    // Normalize the path
     var normalized = path;
     if (normalized.startsWith('file://')) {
       normalized = normalized.substring(7);
@@ -988,7 +987,6 @@ class _LocalBackupExperienceState extends State<LocalBackupExperience> {
       return true;
     }
 
-    // All other paths are valid (including user-created "File Provider Storage" folders)
     return false;
   }
 }

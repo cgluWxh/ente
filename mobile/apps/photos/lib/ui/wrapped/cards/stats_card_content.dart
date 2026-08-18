@@ -194,7 +194,7 @@ List<_ChartTick> _buildAxisTicks(double axisMax) {
     return const <_ChartTick>[_ChartTick(value: 0, label: "0")];
   }
 
-  const int divisions = 2; // top, mid, baseline
+  const int divisions = 2;
   final double step = axisMax / divisions;
   final NumberFormat compactFormat = NumberFormat.compact();
   final NumberFormat integerFormat = NumberFormat.decimalPattern();
@@ -695,7 +695,9 @@ class _FormatDistributionChart extends StatelessWidget {
     );
 
     final NumberFormat numberFormat = NumberFormat.decimalPattern();
-    final List<Color> palette = colorScheme.avatarColors;
+    final palette = Theme.of(context).brightness == Brightness.dark
+        ? components.avatarDark
+        : components.avatarLight;
     final List<Color> colors = <Color>[];
     for (int i = 0; i < entries.length; i += 1) {
       final String label = entries[i].key;

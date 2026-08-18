@@ -7,17 +7,19 @@ description: Upgrading self-hosted Ente
 
 Upgrading Ente depends on the method of installation you have chosen.
 
+> [!IMPORTANT]
+>
+> If your compose file references `ghcr.io/ente-io/`, replace it with `ghcr.io/ente/`, then run `docker compose pull && docker compose up -d`.
+
 ## Quickstart
 
-::: tip For Docker users
-
-You can free up some disk space by deleting older images that were used by obsolete containers.
-
-```sh
-docker image prune
-```
-
-:::
+> [!TIP]
+>
+> You can free up some disk space by deleting older images that were used by obsolete containers.
+>
+> ```sh
+> docker image prune
+> ```
 
 Pull in the latest images in the directory where the Compose file resides. Restart the cluster to recreate containers with newer images.
 

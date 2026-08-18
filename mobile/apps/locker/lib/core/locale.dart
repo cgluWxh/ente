@@ -1,7 +1,6 @@
 import 'package:flutter/cupertino.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-// list of locales which are enabled for locker app.
 // Add more language to the list only when at least 90% of the strings are
 // translated in the corresponding language.
 const List<Locale> appSupportedLocales = <Locale>[
@@ -23,27 +22,25 @@ const List<Locale> appSupportedLocales = <Locale>[
 ];
 
 Locale? autoDetectedLocale;
-// This function takes device locales and supported locales as input
-// and returns the best matching locale.
-// The device locales are sorted by priority, so the first one is the most preferred.
-Locale localResolutionCallBack(onDeviceLocales, supportedLocales) {
+Locale localResolutionCallBack(
+  List<Locale>? onDeviceLocales,
+  Iterable<Locale> supportedLocales,
+) {
   final Set<String> languageSupport = {};
   for (Locale supportedLocale in appSupportedLocales) {
     languageSupport.add(supportedLocale.languageCode);
   }
-  for (Locale locale in onDeviceLocales) {
-    // check if exact local is supported, if yes, return it
+  for (final deviceLocale in onDeviceLocales ?? const []) {
+    final locale = _normalizedLocale(deviceLocale);
     if (appSupportedLocales.contains(locale)) {
       autoDetectedLocale = locale;
       return locale;
     }
-    // check if language code is supported, if yes, return it
     if (languageSupport.contains(locale.languageCode)) {
       autoDetectedLocale = locale;
       return locale;
     }
   }
-  // Return the first language code match or default to 'en'
   return autoDetectedLocale ?? const Locale('en');
 }
 
@@ -51,7 +48,6 @@ Future<Locale?> getLocale({bool noFallback = false}) async {
   final String? savedValue = (await SharedPreferences.getInstance()).getString(
     'locale',
   );
-  // if savedLocale is not null and is supported by the app, return it
   if (savedValue != null) {
     late Locale savedLocale;
     if (savedValue.contains('_')) {
@@ -61,7 +57,7 @@ Future<Locale?> getLocale({bool noFallback = false}) async {
       savedLocale = Locale(savedValue);
     }
     if (appSupportedLocales.contains(savedLocale)) {
-      return savedLocale;
+      return _normalizedLocale(savedLocale);
     }
   }
   if (autoDetectedLocale != null) {
@@ -87,3 +83,6 @@ Future<void> setLocale(Locale locale) async {
     out.toString(),
   );
 }
+
+Locale _normalizedLocale(Locale locale) =>
+    locale.languageCode == 'pt' ? const Locale('pt', 'PT') : locale;

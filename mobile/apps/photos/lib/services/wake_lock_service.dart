@@ -7,26 +7,23 @@ enum WakeLockFor {
   machineLearningSettingsScreen,
   handlingMediaKitEdgeCase,
   rewindViewer,
+  largeBackupStandbyScreen,
 }
 
-/// Use this wrapper to use wakelock. This class makes sure that the wakelock
-/// setting across sessions if set is respected when wakelock is updated for
-/// other non across session purposes.
-/// Only place where this wrapper is not used for accessing wakelock APIs is
-/// in media_kit package.
+// Temporary callers must not override the across-session setting.
+// media_kit is the only code that intentionally bypasses this wrapper.
 class EnteWakeLockService {
   static const String kKeepAppAwakeAcrossSessions =
       "keepAppAwakeAcrossSessions";
 
-  EnteWakeLockService._privateConstructor();
+  EnteWakeLockService(this._prefs);
 
-  static final EnteWakeLockService instance =
-      EnteWakeLockService._privateConstructor();
+  final SharedPreferences _prefs;
 
-  late SharedPreferences _prefs;
-
-  void init(SharedPreferences prefs) {
-    _prefs = prefs;
+  void init({required bool isBackground}) {
+    if (isBackground) {
+      return;
+    }
     if (_prefs.getBool(kKeepAppAwakeAcrossSessions) ?? false) {
       WakelockPlus.enable();
     }

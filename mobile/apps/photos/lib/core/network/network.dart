@@ -9,6 +9,7 @@ import 'package:logging/logging.dart';
 import 'package:native_dio_adapter/native_dio_adapter.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import "package:photos/core/event_bus.dart";
+import "package:photos/core/network/api_response.dart";
 import "package:photos/core/network/endpoint_config.dart";
 import 'package:photos/core/network/ente_interceptor.dart';
 import "package:shared_preferences/shared_preferences.dart";
@@ -36,7 +37,9 @@ class NetworkClient {
     _enteDio = Dio(_newBaseOptions(ua, packageInfo, baseUrl: endpoint));
 
     _dio.httpClientAdapter = _newAdaptiveHttpClientAdapter(_connectTimeout);
-    _downloadDio.httpClientAdapter = NativeAdapter();
+    _downloadDio.httpClientAdapter = _newDownloadHttpClientAdapter(
+      _connectTimeout,
+    );
     _enteDio.httpClientAdapter = _newAdaptiveHttpClientAdapter(_connectTimeout);
 
     _setupInterceptors(endpoint);
@@ -53,8 +56,11 @@ class NetworkClient {
   }
 
   void _setupInterceptors(String endpoint) {
+    _dio.interceptors.clear();
+    _dio.interceptors.add(ApiResponseInterceptor(endpoint));
     _enteDio.interceptors.clear();
     _enteDio.interceptors.add(EnteRequestInterceptor(endpoint));
+    _enteDio.interceptors.add(ApiResponseInterceptor(endpoint));
   }
 
   BaseOptions _newBaseOptions(
@@ -97,6 +103,13 @@ class NetworkClient {
     );
   }
 
+  HttpClientAdapter _newDownloadHttpClientAdapter(Duration connectTimeout) {
+    return _HttpSchemeFallbackAdapter(
+      primaryAdapter: NativeAdapter(),
+      fallbackAdapter: _newAdaptiveHttpClientAdapter(connectTimeout),
+    );
+  }
+
   NetworkClient._privateConstructor();
 
   static NetworkClient instance = NetworkClient._privateConstructor();
@@ -106,6 +119,35 @@ class NetworkClient {
   Dio get downloadDio => _downloadDio;
 
   Dio get enteDio => _enteDio;
+}
+
+class _HttpSchemeFallbackAdapter implements HttpClientAdapter {
+  _HttpSchemeFallbackAdapter({
+    required HttpClientAdapter primaryAdapter,
+    required HttpClientAdapter fallbackAdapter,
+  }) : _primaryAdapter = primaryAdapter,
+       _fallbackAdapter = fallbackAdapter;
+
+  final HttpClientAdapter _primaryAdapter;
+  final HttpClientAdapter _fallbackAdapter;
+
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<void>? cancelFuture,
+  ) {
+    final adapter = options.uri.scheme.toLowerCase() == "http"
+        ? _fallbackAdapter
+        : _primaryAdapter;
+    return adapter.fetch(options, requestStream, cancelFuture);
+  }
+
+  @override
+  void close({bool force = false}) {
+    _primaryAdapter.close(force: force);
+    _fallbackAdapter.close(force: force);
+  }
 }
 
 class _AdaptiveHttpClientAdapter implements HttpClientAdapter {

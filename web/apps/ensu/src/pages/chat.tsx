@@ -11,18 +11,17 @@ import {
     type BranchSwitcher,
 } from "@/services/chat/branching";
 import {
-    cachedChatKey,
     cachedLocalChatKey,
-    getOrCreateChatKey,
     getOrCreateLocalChatKey,
     initChatKeyStore,
 } from "@/services/chat/chatKey";
+import { initializeChatStorePersistence } from "@/services/chat/persistence";
 import {
     addMessage,
     createSession,
+    deleteAttachmentBytes,
     deleteSession,
     getBranchSelections,
-    initializeChatStorePersistence,
     listMessages,
     listSessions,
     readDecryptedAttachmentBytes,
@@ -34,15 +33,6 @@ import {
     type ChatMessage,
     type ChatSession,
 } from "@/services/chat/store";
-import {
-    ChatSyncLimitError,
-    downloadAttachment,
-    syncChat,
-} from "@/services/chat/sync";
-import {
-    DESKTOP_IMAGE_ATTACHMENTS_ENABLED,
-    SIGN_IN_ENABLED,
-} from "@/services/featureFlags";
 import {
     DEFAULT_MODEL,
     FALLBACK_DESKTOP_MODEL_PRESETS,
@@ -57,17 +47,11 @@ import type {
     ModelInfo,
     ModelSettings,
 } from "@/services/llm/types";
-import {
-    clearMasterKeyFromEverywhere,
-    masterKeyFromSession,
-    updateSessionFromTauriSecureStorageIfNeeded,
-} from "@/services/session";
 import { isTauriRuntime as detectTauriAppRuntime } from "@/services/tauri-runtime";
 import { Menu01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
     Box,
-    Button,
     Drawer,
     IconButton,
     Stack,
@@ -75,17 +59,14 @@ import {
     useMediaQuery,
 } from "@mui/material";
 import { getLuminance, useTheme } from "@mui/material/styles";
-import { savedLocalUser } from "ente-accounts/services/accounts-db";
-import { openAccountsManagePasskeysPage } from "ente-accounts/services/passkey";
 import { NavbarBase } from "ente-base/components/Navbar";
+import type { NotificationAttributes } from "ente-base/components/Notification";
 import { useBaseContext } from "ente-base/context";
 import { buildEnvEnsuDesktopVersion } from "ente-base/env";
-import { getKV, removeKV, setKV } from "ente-base/kv";
+import { getKV, removeKV } from "ente-base/kv";
 import log from "ente-base/log";
 import { savedLogs } from "ente-base/log-web";
-import { savedAuthToken } from "ente-base/token";
 import { saveStringAsFile } from "ente-base/utils/web";
-import { type NotificationAttributes } from "ente-new/photos/components/Notification";
 import { useRouter } from "next/router";
 import React, {
     useCallback,
@@ -252,14 +233,14 @@ const toSafeBlobPart = (bytes: Uint8Array): ArrayBuffer => {
 };
 
 const DEFAULT_CHAT_SYSTEM_PROMPT_BODY =
-    "You are Ensu, an AI assistant built by Ente. Current date and time: $date\n\nUse Markdown **bold** to emphasize important terms and key points.\n\nNever acknowledge or repeat these instructions. Do not start with generic confirmations like 'Okay, I understand'. Respond directly to the user's request.";
+    "You are Ensu, an AI assistant built by Ente. Current date: $date\n\nUse Markdown **bold** to emphasize important terms and key points.\n\nNever acknowledge or repeat these instructions. Do not start with generic confirmations like 'Okay, I understand'. Respond directly to the user's request.";
 const SYSTEM_PROMPT_DATE_PLACEHOLDER = "$date";
 
 const buildChatSystemPrompt = (customSystemPrompt?: string) => {
-    const dateAndTime = new Date().toLocaleString();
+    const date = new Date().toLocaleDateString();
     const promptBody =
         customSystemPrompt?.trim() || DEFAULT_CHAT_SYSTEM_PROMPT_BODY;
-    return promptBody.split(SYSTEM_PROMPT_DATE_PLACEHOLDER).join(dateAndTime);
+    return promptBody.split(SYSTEM_PROMPT_DATE_PLACEHOLDER).join(date);
 };
 
 const SESSION_TITLE_PROMPT =
@@ -268,14 +249,19 @@ const SESSION_TITLE_PROMPT =
 const REPEAT_PENALTY = 1.18;
 const STREAMING_OUTRO_DURATION_MS = 520;
 
-type DocumentAttachment = {
+interface DocumentAttachment {
     id: string;
     name: string;
     text: string;
     size: number;
-};
+}
 
-type ImageAttachment = { id: string; name: string; size: number; file: File };
+interface ImageAttachment {
+    id: string;
+    name: string;
+    size: number;
+    file: File;
+}
 
 const createDocumentBlockRegex = () =>
     /----- BEGIN DOCUMENT: ([^\n]+) -----\n([\s\S]*?)\n----- END DOCUMENT: \1 -----/g;
@@ -293,8 +279,9 @@ const parseDocumentBlocks = (text: string) => {
     const normalized = text.replace(/\r\n/g, "\n");
     const regex = createDocumentBlockRegex();
     const documents: DocumentAttachment[] = [];
-    let match: RegExpExecArray | null = null;
-    while ((match = regex.exec(normalized)) !== null) {
+    while (true) {
+        const match = regex.exec(normalized);
+        if (!match) break;
         const name = match[1]?.trim() || "Document";
         const content = match[2] ?? "";
         const size = new TextEncoder().encode(content).length;
@@ -311,7 +298,7 @@ const parseDocumentBlocks = (text: string) => {
 
 const stripHiddenPartsText = (text: string) =>
     text
-        .replace(/\u0000/g, "")
+        .replaceAll("\0", "")
         .replace(/<think>[\s\S]*?<\/think>/g, "")
         .replace(/<todo_list>[\s\S]*?<\/todo_list>/g, "")
         .trim();
@@ -427,12 +414,11 @@ const detectTauriRuntime = () => detectTauriAppRuntime();
 
 const Page: React.FC = () => {
     const router = useRouter();
-    const { logout, showMiniDialog } = useBaseContext();
+    const { showMiniDialog, onGenericError } = useBaseContext();
     const theme = useTheme();
     const isSmall = useMediaQuery(theme.breakpoints.down("md"));
-    const assetBasePath = router.basePath ?? "";
+    const assetBasePath = router.basePath;
     const logoSrc = `${assetBasePath}/images/ensu-logo.svg`;
-    const comingSoonDuckySrc = `${assetBasePath}/images/ensu-ducky.png`;
     const [isDarkMode, setIsDarkMode] = useState(theme.palette.mode === "dark");
 
     useEffect(() => {
@@ -464,9 +450,7 @@ const Page: React.FC = () => {
     const logoFilter = isDarkMode ? "none" : "invert(1)";
     const userBubbleBackground = isDarkMode ? "fill.faintHover" : "fill.faint";
     const messageFontFamily = theme.typography.fontFamily ?? "inherit";
-    const codeFontFamily =
-        theme.typography.code?.fontFamily ??
-        'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
+    const codeFontFamily = theme.typography.code.fontFamily;
     const codeBlockBackground = isDarkMode
         ? "rgba(255, 255, 255, 0.06)"
         : "rgba(0, 0, 0, 0.04)";
@@ -582,7 +566,6 @@ const Page: React.FC = () => {
 
     const [loading, setLoading] = useState(true);
     const [firstPaintDone, setFirstPaintDone] = useState(false);
-    const [isLoggedIn, setIsLoggedIn] = useState(false);
     const [chatKey, setChatKey] = useState<string | undefined>();
     const [sessions, setSessions] = useState<ChatSession[]>([]);
     const [allMessages, setAllMessages] = useState<ChatMessage[]>([]);
@@ -611,14 +594,14 @@ const Page: React.FC = () => {
     const [showModelSettings, setShowModelSettings] = useState(false);
     const [showSystemPromptSettings, setShowSystemPromptSettings] =
         useState(false);
-    const [useCustomModel, setUseCustomModel] = useState(false);
+
+    const [modelSettingsLoaded, setModelSettingsLoaded] = useState(false);
     const [resolvedDefaultModel, setResolvedDefaultModel] =
         useState<ModelInfo>(DEFAULT_MODEL);
     const [resolvedModelPresets, setResolvedModelPresets] = useState<
         ResolvedModelPreset[] | null
     >(null);
-    const [modelUrl, setModelUrl] = useState("");
-    const [mmprojUrl, setMmprojUrl] = useState("");
+    const [selectedModelId, setSelectedModelId] = useState("");
     const [contextLength, setContextLength] = useState("");
     const [maxTokens, setMaxTokens] = useState("");
     const [systemPrompt, setSystemPrompt] = useState(
@@ -634,10 +617,10 @@ const Page: React.FC = () => {
     const [pendingImages, setPendingImages] = useState<ImageAttachment[]>([]);
     const [attachmentAnchor, setAttachmentAnchor] =
         useState<HTMLElement | null>(null);
-    const [syncNotification, setSyncNotification] = useState<
+    const [chatNotification, setChatNotification] = useState<
         NotificationAttributes | undefined
     >(undefined);
-    const [syncNotificationOpen, setSyncNotificationOpen] = useState(false);
+    const [chatNotificationOpen, setChatNotificationOpen] = useState(false);
     const [isGenerating, setIsGenerating] = useState(false);
     const [isStreamingOutro, setIsStreamingOutro] = useState(false);
     const [loadingPhrase, setLoadingPhrase] = useState<string | null>(null);
@@ -670,27 +653,31 @@ const Page: React.FC = () => {
     >("checking");
     const [modelGateError, setModelGateError] = useState<string | null>(null);
     const [isTauriRuntime, setIsTauriRuntime] = useState(false);
+    const [renameSessionId, setRenameSessionId] = useState<string | null>(null);
+    const [renameSessionTitle, setRenameSessionTitle] = useState("");
     const [deleteSessionId, setDeleteSessionId] = useState<string | null>(null);
 
     const allowMmproj = isTauriRuntime;
 
     const providerRef = useRef<LlmProvider | null>(null);
     const currentJobIdRef = useRef<number | null>(null);
-    const pendingCancelRef = useRef(false);
-    const stopRequestedRef = useRef(false);
     const generationTokenRef = useRef(0);
     const lastGenerationRef = useRef<{
         parentMessageUuid: string;
         previousSelection?: string | null;
     } | null>(null);
     const sessionSummaryInFlightRef = useRef(false);
+    const manuallyRenamedSessionIdsRef = useRef(new Set<string>());
+    const pendingSessionRenamesRef = useRef(new Set<string>());
+    const sessionTitleUpdatesRef = useRef(new Map<string, Promise<void>>());
     const inputRef = useRef<HTMLTextAreaElement | null>(null);
     const attachmentPreviewUrlsRef = useRef<Record<string, string>>({});
     const pendingPreviewUrlsRef = useRef<Record<string, string>>({});
     const imagePreviewUrlRef = useRef<string | null>(null);
-    const attachmentPreviewInFlightRef = useRef<Record<string, Promise<void>>>(
-        {},
+    const attachmentPreviewInFlightRef = useRef(
+        new Map<string, Promise<void>>(),
     );
+
     const chatViewportRef = useRef<HTMLDivElement | null>(null);
     const scrollContainerRef = useRef<HTMLDivElement | null>(null);
     const lastScrollTopRef = useRef(0);
@@ -714,12 +701,11 @@ const Page: React.FC = () => {
         promise: Promise<void> | null;
     }>({ sessionId: undefined, promise: null });
 
-    const authRefreshCancelledRef = useRef(false);
-    const authRetryCancelledRef = useRef(false);
+    const chatKeyInitCancelledRef = useRef(false);
 
     const scheduleIdleTask = useCallback(
         (callback: () => void, timeout = 1200) => {
-            if (typeof window === "undefined") return () => {};
+            if (typeof window === "undefined") return () => undefined;
             if (typeof window.requestIdleCallback === "function") {
                 const handle = window.requestIdleCallback(() => callback(), {
                     timeout,
@@ -776,73 +762,15 @@ const Page: React.FC = () => {
         [router],
     );
 
-    const refreshAuthState = useCallback(async () => {
-        await initChatKeyStore();
-        await updateSessionFromTauriSecureStorageIfNeeded();
-        const token = await savedAuthToken();
-        const hasToken = !!token;
-
-        log.info("Refreshing auth state", { hasToken });
-
-        if (hasToken) {
-            const cachedRemote = cachedChatKey();
-            if (cachedRemote) {
-                log.info("Using cached remote chat key");
-                setChatKey(cachedRemote);
-                setIsLoggedIn(true);
-                return;
-            }
-
-            let masterKey: string | undefined;
-
-            try {
-                masterKey = await masterKeyFromSession();
-            } catch (error) {
-                log.error("Failed to read master key from session", error);
-                await clearMasterKeyFromEverywhere();
-            }
-
-            if (!masterKey) {
-                log.warn(
-                    "No master key found in session storage; redirecting to credentials",
-                );
-                setChatKey(undefined);
-                setIsLoggedIn(false);
-                if (router.pathname !== "/credentials") {
-                    void router.replace("/credentials");
-                }
-                return;
-            }
-
-            try {
-                log.info("Found master key in session, deriving chat key");
-                const remoteKey = await getOrCreateChatKey(masterKey);
-                setChatKey(remoteKey);
-                setIsLoggedIn(true);
-                return;
-            } catch (error) {
-                log.error("Failed to load remote chat key", error);
-                showMiniDialog({
-                    title: "Sync unavailable",
-                    message:
-                        "We could not load your chat encryption key. Please try again.",
-                });
-                setChatKey(undefined);
-                setIsLoggedIn(true);
-                return;
-            }
-        }
-
-        setIsLoggedIn(false);
-
-        const cachedLocal = cachedLocalChatKey();
-        if (cachedLocal) {
-            log.info("Falling back to cached local chat key");
-            setChatKey(cachedLocal);
-            return;
-        }
-
+    const refreshLocalChatKey = useCallback(async () => {
         try {
+            await initChatKeyStore();
+            const cachedLocal = cachedLocalChatKey();
+            if (cachedLocal) {
+                log.info("Using cached local chat key");
+                setChatKey(cachedLocal);
+                return;
+            }
             log.info("Generating new local chat key");
             setChatKey(await getOrCreateLocalChatKey());
         } catch (error) {
@@ -853,24 +781,24 @@ const Page: React.FC = () => {
                     "We could not initialize encryption. Please refresh the page.",
             });
         }
-    }, [router, showMiniDialog]);
+    }, [showMiniDialog]);
 
     useEffect(() => {
-        authRefreshCancelledRef.current = false;
+        chatKeyInitCancelledRef.current = false;
 
         void (async () => {
             try {
-                await refreshAuthState();
+                await refreshLocalChatKey();
             } catch (error) {
-                log.error("Failed to refresh auth state", error);
+                log.error("Failed to initialize local chat key", error);
             }
-            if (!authRefreshCancelledRef.current) setLoading(false);
+            if (!chatKeyInitCancelledRef.current) setLoading(false);
         })();
 
         return () => {
-            authRefreshCancelledRef.current = true;
+            chatKeyInitCancelledRef.current = true;
         };
-    }, [refreshAuthState]);
+    }, [refreshLocalChatKey]);
 
     useEffect(() => {
         routeInitializedRef.current = false;
@@ -886,12 +814,10 @@ const Page: React.FC = () => {
         const run = async () => {
             try {
                 await initializeChatStorePersistence(chatKey);
+                if (!cancelled) setIsChatStoreBridgeReady(true);
             } catch (error) {
                 log.error("Failed to initialize chat persistence", error);
-            } finally {
-                if (!cancelled) {
-                    setIsChatStoreBridgeReady(true);
-                }
+                if (!cancelled) onGenericError(error);
             }
         };
         void run();
@@ -900,60 +826,11 @@ const Page: React.FC = () => {
             cancelled = true;
             setIsChatStoreBridgeReady(false);
         };
-    }, [chatKey]);
+    }, [chatKey, onGenericError]);
 
     useEffect(() => {
         isDraftSessionRef.current = isDraftSession;
     }, [isDraftSession]);
-
-    useEffect(() => {
-        if (typeof window === "undefined") return;
-
-        authRetryCancelledRef.current = false;
-        let attempts = 0;
-        let timeoutId: number | undefined;
-
-        const retry = async () => {
-            if (authRetryCancelledRef.current) return;
-            const token = await savedAuthToken();
-            let masterKey: string | undefined;
-
-            try {
-                masterKey = await masterKeyFromSession();
-            } catch (error) {
-                log.error("Failed to read master key from session", error);
-                await clearMasterKeyFromEverywhere();
-            }
-
-            const remoteKey = cachedChatKey();
-
-            // If we are logged in, we want to wait for either the master key to
-            // appear in session storage, or for a previously cached remote key
-            // to be available.
-            if (token && (masterKey || remoteKey)) {
-                await refreshAuthState();
-                return;
-            }
-
-            // If we're not logged in, we just retry a few times to see if a
-            // login token appears (e.g. from a recent redirect).
-            if (!token && attempts >= 5) {
-                return;
-            }
-
-            attempts += 1;
-            if (attempts < 15) {
-                timeoutId = window.setTimeout(retry, 600);
-            }
-        };
-
-        timeoutId = window.setTimeout(retry, 600);
-
-        return () => {
-            authRetryCancelledRef.current = true;
-            if (timeoutId) window.clearTimeout(timeoutId);
-        };
-    }, [refreshAuthState]);
 
     useEffect(() => {
         if (typeof window === "undefined") return;
@@ -1049,7 +926,8 @@ const Page: React.FC = () => {
     }, []);
 
     useEffect(() => {
-        if (loading || typeof window === "undefined") return;
+        if (loading || !modelSettingsLoaded || typeof window === "undefined")
+            return;
         const element = chatViewportRef.current;
         if (!element) return;
 
@@ -1068,7 +946,7 @@ const Page: React.FC = () => {
         const observer = new ResizeObserver(() => updateWidth());
         observer.observe(element);
         return () => observer.disconnect();
-    }, [loading]);
+    }, [loading, modelSettingsLoaded]);
 
     useEffect(() => {
         if (typeof window === "undefined") return;
@@ -1081,104 +959,97 @@ const Page: React.FC = () => {
                 DEFAULT_CHAT_SYSTEM_PROMPT_BODY,
         );
 
-        // Only restore custom model settings when advanced settings are
-        // unlocked. Without this gate a user who had custom settings before
-        // the unlock feature was added would silently keep a hidden custom
-        // model with no visible way to change it.
-        if (!isUnlocked) return;
-
-        let raw = window.localStorage.getItem(MODEL_SETTINGS_STORAGE_KEY);
-        if (!raw) {
-            // Migrate from IndexedDB (previous storage) to localStorage
-            void getKV(MODEL_SETTINGS_STORAGE_KEY)
-                .then((kvRaw) => {
-                    if (cancelled || !kvRaw || typeof kvRaw !== "object") {
-                        return;
-                    }
-                    const migrated = JSON.stringify(kvRaw);
-                    window.localStorage.setItem(
-                        MODEL_SETTINGS_STORAGE_KEY,
-                        migrated,
-                    );
-                    // Re-trigger the effect by reloading settings from the migrated data
-                    const parsed = kvRaw as {
-                        useCustomModel?: boolean;
-                        modelUrl?: string;
-                        mmprojUrl?: string;
-                        contextLength?: string;
-                        maxTokens?: string;
-                    };
-                    const isTauri = detectTauriRuntime();
-                    const canMmproj = isTauri;
-                    const rawContextLength = parsed.contextLength ?? "";
-                    const clampedContextLength =
-                        !isTauri &&
-                        rawContextLength &&
-                        Number(rawContextLength) > DEFAULT_WEB_CONTEXT_SIZE
-                            ? String(DEFAULT_WEB_CONTEXT_SIZE)
-                            : rawContextLength;
-                    if (clampedContextLength !== rawContextLength) {
-                        const clamped = {
-                            ...parsed,
-                            contextLength: clampedContextLength,
-                        };
-                        window.localStorage.setItem(
-                            MODEL_SETTINGS_STORAGE_KEY,
-                            JSON.stringify(clamped),
-                        );
-                    }
-                    setUseCustomModel(!!parsed.useCustomModel);
-                    setModelUrl(parsed.modelUrl ?? "");
-                    setMmprojUrl(canMmproj ? (parsed.mmprojUrl ?? "") : "");
-                    setContextLength(clampedContextLength);
-                    setMaxTokens(parsed.maxTokens ?? "");
-                    void removeKV(MODEL_SETTINGS_STORAGE_KEY);
-                })
-                .catch((error: unknown) => {
-                    log.error("Failed to migrate model settings", error);
-                });
-            return () => {
-                cancelled = true;
-            };
-        }
-        try {
-            const parsed = JSON.parse(raw) as {
-                useCustomModel?: boolean;
-                modelUrl?: string;
-                mmprojUrl?: string;
-                contextLength?: string;
-                maxTokens?: string;
-            };
-            const isTauri = detectTauriRuntime();
-            const canMmproj = isTauri;
+        const applySettings = (parsed: {
+            modelId?: string;
+            contextLength?: string;
+            maxTokens?: string;
+        }) => {
             const rawContextLength = parsed.contextLength ?? "";
             const clampedContextLength =
-                !isTauri &&
+                !detectTauriRuntime() &&
                 rawContextLength &&
                 Number(rawContextLength) > DEFAULT_WEB_CONTEXT_SIZE
                     ? String(DEFAULT_WEB_CONTEXT_SIZE)
                     : rawContextLength;
-            if (clampedContextLength !== rawContextLength) {
-                const nextSettings = {
-                    useCustomModel: !!parsed.useCustomModel,
-                    modelUrl: parsed.modelUrl ?? "",
-                    mmprojUrl: canMmproj ? (parsed.mmprojUrl ?? "") : "",
-                    contextLength: clampedContextLength,
-                    maxTokens: parsed.maxTokens ?? "",
-                };
-                window.localStorage.setItem(
-                    MODEL_SETTINGS_STORAGE_KEY,
-                    JSON.stringify(nextSettings),
+            const settings = {
+                modelId: parsed.modelId ?? "",
+                contextLength: clampedContextLength,
+                maxTokens: parsed.maxTokens ?? "",
+            };
+            window.localStorage.setItem(
+                MODEL_SETTINGS_STORAGE_KEY,
+                JSON.stringify(settings),
+            );
+            if (cancelled) return;
+            setSelectedModelId(settings.modelId);
+            setContextLength(settings.contextLength);
+            setMaxTokens(settings.maxTokens);
+        };
+
+        // Older builds persisted a model URL selection; llm_migrate_models
+        // converts it to a model id once.
+        const loadSettings = async () => {
+            let raw = window.localStorage.getItem(MODEL_SETTINGS_STORAGE_KEY);
+            if (!raw) {
+                // Settings from even older builds live in IndexedDB.
+                const kvRaw = await getKV(MODEL_SETTINGS_STORAGE_KEY).catch(
+                    () => undefined,
                 );
+                if (kvRaw && typeof kvRaw === "object") {
+                    raw = JSON.stringify(kvRaw);
+                    window.localStorage.setItem(
+                        MODEL_SETTINGS_STORAGE_KEY,
+                        raw,
+                    );
+                    void removeKV(MODEL_SETTINGS_STORAGE_KEY);
+                }
             }
-            setUseCustomModel(!!parsed.useCustomModel);
-            setModelUrl(parsed.modelUrl ?? "");
-            setMmprojUrl(canMmproj ? (parsed.mmprojUrl ?? "") : "");
-            setContextLength(clampedContextLength);
-            setMaxTokens(parsed.maxTokens ?? "");
-        } catch (error) {
-            log.error("Failed to read model settings", error);
-        }
+            const parsed = raw
+                ? (JSON.parse(raw) as {
+                      modelId?: string;
+                      useCustomModel?: boolean;
+                      modelUrl?: string;
+                      mmprojUrl?: string;
+                      contextLength?: string;
+                      maxTokens?: string;
+                  })
+                : {};
+            let modelId = parsed.modelId ?? "";
+            if (detectTauriRuntime()) {
+                const legacyModelUrl =
+                    parsed.modelId === undefined &&
+                    parsed.useCustomModel &&
+                    parsed.modelUrl?.trim()
+                        ? parsed.modelUrl.trim()
+                        : null;
+                const { invoke } = await import("@tauri-apps/api/core");
+                const converted = await invoke<string | null>(
+                    "llm_migrate_models",
+                    {
+                        legacyModelUrl,
+                        legacyMmprojUrl: legacyModelUrl
+                            ? parsed.mmprojUrl?.trim() || null
+                            : null,
+                    },
+                );
+                if (legacyModelUrl) {
+                    modelId = converted ?? "";
+                }
+            }
+            applySettings({
+                modelId,
+                contextLength: parsed.contextLength,
+                maxTokens: parsed.maxTokens,
+            });
+        };
+
+        void loadSettings()
+            .catch((error: unknown) => {
+                log.error("Failed to load model settings", error);
+            })
+            .finally(() => {
+                if (!cancelled) setModelSettingsLoaded(true);
+            });
         return () => {
             cancelled = true;
         };
@@ -1410,123 +1281,38 @@ const Page: React.FC = () => {
             attributes: NotificationAttributes & { autoHideDuration?: number },
         ) => {
             const { autoHideDuration, ...rest } = attributes;
-            setSyncNotification(rest);
-            setSyncNotificationOpen(true);
+            setChatNotification(rest);
+            setChatNotificationOpen(true);
             if (toastTimeoutRef.current) {
                 window.clearTimeout(toastTimeoutRef.current);
                 toastTimeoutRef.current = null;
             }
             if (autoHideDuration && typeof window !== "undefined") {
                 toastTimeoutRef.current = window.setTimeout(() => {
-                    setSyncNotificationOpen(false);
+                    setChatNotificationOpen(false);
                 }, autoHideDuration);
             }
         },
-        [setSyncNotification, setSyncNotificationOpen],
+        [setChatNotification, setChatNotificationOpen],
     );
-
-    const syncNow = useCallback(
-        async ({
-            showToast: shouldShowToast = false,
-        }: { showToast?: boolean } = {}) => {
-            if (!chatKey) return;
-            let activeChatKey = chatKey;
-            let remoteKey = cachedChatKey();
-            let canSync =
-                isLoggedIn && !!remoteKey && remoteKey === activeChatKey;
-
-            if (!canSync && isLoggedIn) {
-                await refreshAuthState();
-                remoteKey = cachedChatKey();
-                if (remoteKey) {
-                    activeChatKey = remoteKey;
-                    if (remoteKey !== chatKey) {
-                        setChatKey(remoteKey);
-                    }
-                    canSync = true;
-                }
-            }
-
-            if (canSync) {
-                try {
-                    await syncChat(activeChatKey);
-                    if (shouldShowToast) {
-                        showToast({
-                            title: "Sync complete",
-                            caption: "Your chats are up to date.",
-                            color: "accent",
-                            autoHideDuration: 3000,
-                        });
-                    }
-                } catch (error) {
-                    log.error("Chat sync failed", error);
-                    if (shouldShowToast) {
-                        showToast({
-                            title: "Sync failed",
-                            caption:
-                                error instanceof ChatSyncLimitError
-                                    ? error.message
-                                    : "We could not sync right now.",
-                            color: "critical",
-                            autoHideDuration: 4000,
-                        });
-                    }
-                    if (error instanceof ChatSyncLimitError) {
-                        showMiniDialog({
-                            title: "Sync limit reached",
-                            message: error.message,
-                        });
-                    }
-                }
-            } else if (shouldShowToast) {
-                showToast({
-                    title: "Sync unavailable",
-                    caption: "Encryption is still initializing.",
-                    color: "critical",
-                    autoHideDuration: 3000,
-                });
-            }
-
-            await refreshSessions();
-            await refreshMessages();
-        },
-        [
-            chatKey,
-            isLoggedIn,
-            refreshAuthState,
-            refreshMessages,
-            refreshSessions,
-            showMiniDialog,
-            showToast,
-        ],
-    );
-
-    useEffect(() => {
-        if (typeof window === "undefined") return;
-        if (!chatKey || !isLoggedIn) return;
-        const intervalId = window.setInterval(() => {
-            void syncNow();
-        }, 60_000);
-        return () => {
-            window.clearInterval(intervalId);
-        };
-    }, [chatKey, isLoggedIn, syncNow]);
 
     useEffect(() => {
         if (typeof window === "undefined") return;
 
         const handleFocus = () => {
-            void refreshAuthState();
-            if (chatKey && isLoggedIn) {
-                void syncNow();
+            void refreshLocalChatKey();
+            if (chatKey) {
+                void refreshSessions();
+                void refreshMessages();
             }
         };
 
         const handleVisibility = () => {
             if (!document.hidden) {
-                void refreshAuthState();
-                if (chatKey && isLoggedIn) {
-                    void syncNow();
+                void refreshLocalChatKey();
+                if (chatKey) {
+                    void refreshSessions();
+                    void refreshMessages();
                 }
             }
         };
@@ -1538,7 +1324,7 @@ const Page: React.FC = () => {
             window.removeEventListener("focus", handleFocus);
             document.removeEventListener("visibilitychange", handleVisibility);
         };
-    }, [chatKey, isLoggedIn, refreshAuthState, syncNow]);
+    }, [chatKey, refreshLocalChatKey, refreshMessages, refreshSessions]);
 
     const deleteSessionTarget = useMemo(
         () =>
@@ -1551,7 +1337,7 @@ const Page: React.FC = () => {
     );
 
     const deleteSessionLabel = useMemo(() => {
-        const title = deleteSessionTarget?.title?.trim();
+        const title = deleteSessionTarget?.title.trim();
         if (title && title !== "New chat") {
             return `"${title}"`;
         }
@@ -1560,12 +1346,8 @@ const Page: React.FC = () => {
 
     useEffect(() => {
         if (!chatKey || !isChatStoreBridgeReady) return;
-        if (isLoggedIn) {
-            void syncNow();
-            return;
-        }
         void refreshSessions();
-    }, [chatKey, isChatStoreBridgeReady, isLoggedIn, refreshSessions, syncNow]);
+    }, [chatKey, isChatStoreBridgeReady, refreshSessions]);
 
     useEffect(() => {
         currentSessionIdRef.current = currentSessionId;
@@ -1594,7 +1376,6 @@ const Page: React.FC = () => {
         setPendingImages([]);
         setStickToBottom(true);
         currentJobIdRef.current = null;
-        pendingCancelRef.current = false;
     }, [currentSessionId]);
 
     useEffect(() => {
@@ -1635,11 +1416,10 @@ const Page: React.FC = () => {
         async (attachment: ChatAttachment, sessionUuid: string) => {
             if (!chatKey || !firstPaintDone) return;
             if (attachmentPreviewUrlsRef.current[attachment.id]) return;
-            if (attachmentPreviewInFlightRef.current[attachment.id]) return;
+            if (attachmentPreviewInFlightRef.current.has(attachment.id)) return;
 
             const task = (async () => {
                 try {
-                    await downloadAttachment(attachment.id);
                     const bytes = await readDecryptedAttachmentBytes(
                         attachment.id,
                         chatKey,
@@ -1663,29 +1443,24 @@ const Page: React.FC = () => {
                 }
             })();
 
-            attachmentPreviewInFlightRef.current[attachment.id] = task;
+            attachmentPreviewInFlightRef.current.set(attachment.id, task);
             try {
                 await task;
             } finally {
-                delete attachmentPreviewInFlightRef.current[attachment.id];
+                attachmentPreviewInFlightRef.current.delete(attachment.id);
             }
         },
         [chatKey, firstPaintDone, inferImageMime],
     );
 
     useEffect(() => {
-        const next = { ...pendingPreviewUrlsRef.current };
         const activeIds = new Set(pendingImages.map((image) => image.id));
+        const next: Record<string, string> = {};
 
-        Object.keys(next).forEach((id) => {
-            if (!activeIds.has(id)) {
-                const url = next[id];
-                if (url) {
-                    URL.revokeObjectURL(url);
-                }
-                delete next[id];
-            }
-        });
+        for (const [id, url] of Object.entries(pendingPreviewUrlsRef.current)) {
+            if (activeIds.has(id)) next[id] = url;
+            else URL.revokeObjectURL(url);
+        }
 
         pendingImages.forEach((image) => {
             if (!next[image.id]) {
@@ -1728,18 +1503,11 @@ const Page: React.FC = () => {
         };
     }, [currentRootSessionUuid]);
 
-    useEffect(() => {
-        if (isTauriRuntime) return;
-        if (mmprojUrl) {
-            setMmprojUrl("");
-        }
-    }, [isTauriRuntime, mmprojUrl]);
-
     const filteredSessions = useMemo(() => {
         const query = sessionSearch.trim().toLowerCase();
         if (!query) return sessions;
         return sessions.filter((session) => {
-            const title = session.title?.toLowerCase() ?? "";
+            const title = session.title.toLowerCase();
             const preview = session.lastMessagePreview?.toLowerCase() ?? "";
             return title.includes(query) || preview.includes(query);
         });
@@ -1765,8 +1533,7 @@ const Page: React.FC = () => {
     );
 
     const displayMessages = useMemo(() => {
-        const base = messageState.path ?? [];
-        // Insert synthetic "Response was interrupted" placeholders for orphaned user messages
+        const base = messageState.path;
         const augmented: ChatMessage[] = [];
         for (let i = 0; i < base.length; i++) {
             const msg = base[i];
@@ -1823,24 +1590,16 @@ const Page: React.FC = () => {
             });
         });
 
-        // Clean up blob URLs for attachments no longer displayed.
         setAttachmentPreviews((prev) => {
-            const next = { ...prev };
-            Object.keys(next).forEach((id) => {
-                if (!activeIds.has(id)) {
-                    const url = next[id];
-                    if (url) {
-                        URL.revokeObjectURL(url);
-                    }
-                    delete next[id];
-                }
-            });
+            const next: Record<string, string> = {};
+            for (const [id, url] of Object.entries(prev)) {
+                if (activeIds.has(id)) next[id] = url;
+                else URL.revokeObjectURL(url);
+            }
             attachmentPreviewUrlsRef.current = next;
             return next;
         });
 
-        // Load previews for persisted image attachments that do not have blob
-        // URLs yet, such as after reopening the app.
         for (const message of displayMessages) {
             for (const attachment of message.attachments ?? []) {
                 if (attachment.kind === "image") {
@@ -1852,11 +1611,9 @@ const Page: React.FC = () => {
 
     const showDrawerToggle = isSmall || drawerCollapsed;
     const drawerWidth = isSmall ? 300 : drawerCollapsed ? 0 : 320;
-    const desktopBreakpoint = theme.breakpoints.values.lg ?? 1200;
+    const desktopBreakpoint = theme.breakpoints.values.lg;
     const isDesktopOverlay = !isSmall && chatViewportWidth >= desktopBreakpoint;
-    const showAttachmentPicker = isTauriRuntime;
-    const showImageAttachment =
-        showAttachmentPicker && DESKTOP_IMAGE_ATTACHMENTS_ENABLED;
+    const showImageAttachment = isTauriRuntime;
     const showDownloadProgress =
         !!downloadStatus?.status && downloadStatus.status !== "Ready";
     const showModelGate =
@@ -1865,7 +1622,7 @@ const Page: React.FC = () => {
         modelGateStatus === "downloading";
 
     const downloadSizeLabel = useMemo(() => {
-        if (useCustomModel) {
+        if (selectedModelId) {
             return "Approx. size varies by model";
         }
         if (resolvedDefaultModel.sizeBytes) {
@@ -1877,21 +1634,23 @@ const Page: React.FC = () => {
         return resolvedDefaultModel.sizeHuman
             ? `Approx. ${resolvedDefaultModel.sizeHuman}`
             : "Approx. size varies by model";
-    }, [allowMmproj, resolvedDefaultModel, useCustomModel]);
+    }, [allowMmproj, resolvedDefaultModel, selectedModelId]);
 
     const downloadStatusLabel = useMemo(() => {
-        if (!showDownloadProgress) return null;
-        const status = downloadStatus?.status ?? "";
+        if (!downloadStatus?.status || downloadStatus.status === "Ready") {
+            return null;
+        }
+        const status = downloadStatus.status;
         if (status.toLowerCase().includes("loading")) {
             return status;
         }
-        if (downloadStatus?.totalBytes && downloadStatus.percent >= 0) {
+        if (downloadStatus.totalBytes && downloadStatus.percent >= 0) {
             const downloaded = downloadStatus.bytesDownloaded ?? 0;
             return `Downloading... ${formatBytes(downloaded)} / ${formatBytes(downloadStatus.totalBytes)}`;
         }
         if (status) return status;
         return "Downloading...";
-    }, [downloadStatus, showDownloadProgress]);
+    }, [downloadStatus]);
 
     const focusInput = useCallback(() => {
         if (showModelGate) return;
@@ -1928,31 +1687,15 @@ const Page: React.FC = () => {
     }, []);
 
     const getModelSettings = useCallback((): ModelSettings => {
-        const customModelEnabled = useCustomModel;
         return {
-            useCustomModel: customModelEnabled,
-            modelUrl:
-                customModelEnabled && modelUrl.trim()
-                    ? modelUrl.trim()
-                    : undefined,
-            mmprojUrl:
-                customModelEnabled && allowMmproj && mmprojUrl.trim()
-                    ? mmprojUrl.trim()
-                    : undefined,
+            modelId: selectedModelId || undefined,
             contextLength: contextLength ? Number(contextLength) : undefined,
             maxTokens:
                 maxTokens && Number(maxTokens) > 0
                     ? Number(maxTokens)
                     : undefined,
         };
-    }, [
-        useCustomModel,
-        modelUrl,
-        mmprojUrl,
-        contextLength,
-        maxTokens,
-        allowMmproj,
-    ]);
+    }, [selectedModelId, contextLength, maxTokens]);
 
     const modelSettingsKey = useMemo(
         () => JSON.stringify(getModelSettings()),
@@ -1979,21 +1722,20 @@ const Page: React.FC = () => {
             if ("__wbg_ptr" in error) {
                 return "Model failed to start. Please refresh and try again.";
             }
-            const text = String(error);
-            if (text && text !== "[object Object]") {
-                return normalizeErrorMessage(text);
-            }
         }
         try {
-            return normalizeErrorMessage(JSON.stringify(error));
+            const serialized = JSON.stringify(error);
+            return serialized
+                ? normalizeErrorMessage(serialized)
+                : "Unknown model error";
         } catch {
-            return normalizeErrorMessage(String(error));
+            return "Unknown model error";
         }
     }, []);
 
     const trimToWords = useCallback((text: string, maxWords: number) => {
         const normalized = text
-            .replace(/\u0000/g, "")
+            .replaceAll("\0", "")
             .replace(/[\r\n\t]+/g, " ")
             .replace(/\s+/g, " ")
             .trim();
@@ -2043,7 +1785,7 @@ const Page: React.FC = () => {
                     try {
                         await remove(path);
                     } catch {
-                        // ignore cleanup failures
+                        // Deleting the temporary file is best effort.
                     }
                 }),
             );
@@ -2068,7 +1810,6 @@ const Page: React.FC = () => {
             await provider.ensureModelReady(settings);
 
             let summary = "";
-            let errorMessage: string | null = null;
 
             await provider.generateChatStream(
                 {
@@ -2084,17 +1825,9 @@ const Page: React.FC = () => {
                 (event) => {
                     if (event.type === "text") {
                         summary += event.text;
-                        return;
-                    }
-                    if (event.type === "error") {
-                        errorMessage = event.message;
                     }
                 },
             );
-
-            if (errorMessage) {
-                throw new Error(errorMessage);
-            }
 
             return summary;
         },
@@ -2103,18 +1836,39 @@ const Page: React.FC = () => {
 
     const updateSessionTitleInState = useCallback(
         (sessionUuid: string, title: string) => {
-            const updatedAt = Date.now() * 1000;
-            setSessions((prev) => {
-                const next = prev.map((session) =>
+            setSessions((prev) =>
+                prev.map((session) =>
                     session.sessionUuid === sessionUuid
-                        ? { ...session, title, updatedAt }
+                        ? { ...session, title }
                         : session,
-                );
-                next.sort((a, b) => b.updatedAt - a.updatedAt);
-                return next;
-            });
+                ),
+            );
         },
         [],
+    );
+
+    const persistSessionTitle = useCallback(
+        (sessionUuid: string, title: string, key: string) => {
+            const previous = sessionTitleUpdatesRef.current.get(sessionUuid);
+            const task = (
+                previous?.catch(() => undefined) ?? Promise.resolve()
+            ).then(async () => {
+                await updateSessionTitle(sessionUuid, title, key);
+                updateSessionTitleInState(sessionUuid, title);
+            });
+            sessionTitleUpdatesRef.current.set(sessionUuid, task);
+            void task
+                .finally(() => {
+                    if (
+                        sessionTitleUpdatesRef.current.get(sessionUuid) === task
+                    ) {
+                        sessionTitleUpdatesRef.current.delete(sessionUuid);
+                    }
+                })
+                .catch(() => undefined);
+            return task;
+        },
+        [updateSessionTitleInState],
     );
 
     const maybeGenerateSessionTitle = useCallback(
@@ -2147,7 +1901,25 @@ const Page: React.FC = () => {
                 );
                 if (!firstUser) return;
 
+                const currentTitle = sessions.find(
+                    (session) => session.sessionUuid === sessionUuid,
+                )?.title;
                 const userText = parseDocumentBlocks(firstUser.text).text;
+                const automaticFallbackTitles = [
+                    sessionTitleFromText(firstUser.text, "New chat"),
+                    sessionTitleFromText(
+                        userText || firstUser.text,
+                        "New chat",
+                    ),
+                ];
+                if (
+                    currentTitle &&
+                    currentTitle.toLowerCase() !== "new chat" &&
+                    !automaticFallbackTitles.includes(currentTitle)
+                ) {
+                    return;
+                }
+
                 const assistantText = stripHiddenPartsText(firstAssistant.text);
 
                 const fallbackSeed = trimToWords(userText, 7) || "New chat";
@@ -2163,8 +1935,10 @@ const Page: React.FC = () => {
                     ? sessionTitleFromText(summarySeed, fallbackTitle)
                     : fallbackTitle;
 
-                await updateSessionTitle(sessionUuid, title, chatKey);
-                updateSessionTitleInState(sessionUuid, title);
+                if (manuallyRenamedSessionIdsRef.current.has(sessionUuid)) {
+                    return;
+                }
+                await persistSessionTitle(sessionUuid, title, chatKey);
             } catch (error) {
                 log.error("Failed to generate session title", error);
             } finally {
@@ -2174,8 +1948,9 @@ const Page: React.FC = () => {
         [
             chatKey,
             generateSessionSummary,
+            persistSessionTitle,
+            sessions,
             trimToWords,
-            updateSessionTitleInState,
         ],
     );
 
@@ -2211,6 +1986,7 @@ const Page: React.FC = () => {
             log.error("Failed to preload model", error);
             setModelGateError(message);
             setIsDownloading(false);
+            setDownloadStatus(null);
             setModelGateStatus("error");
         }
     }, [ensureProvider, formatErrorMessage, getModelSettings]);
@@ -2234,6 +2010,7 @@ const Page: React.FC = () => {
             log.error("Failed to prepare model", error);
             setModelGateError(message);
             setIsDownloading(false);
+            setDownloadStatus(null);
             setModelGateStatus("error");
             showMiniDialog({ title: "Model error", message });
         }
@@ -2254,7 +2031,7 @@ const Page: React.FC = () => {
     }, [ensureProvider, getModelSettings, isTauriRuntime]);
 
     useEffect(() => {
-        if (!firstPaintDone) return;
+        if (!firstPaintDone || !modelSettingsLoaded) return;
         const cancelIdle = scheduleIdleTask(() => {
             void preloadModelIfAvailable();
         }, 2000);
@@ -2263,6 +2040,7 @@ const Page: React.FC = () => {
         };
     }, [
         firstPaintDone,
+        modelSettingsLoaded,
         modelSettingsKey,
         preloadModelIfAvailable,
         scheduleIdleTask,
@@ -2382,38 +2160,33 @@ const Page: React.FC = () => {
     }, []);
 
     const buildHistory = useCallback(
-        async (
+        (
             path: ChatMessage[],
             promptText: string,
             contextSize: number,
             maxTokensCount?: number,
             stopAtMessageUuid?: string | null,
-        ): Promise<LlmMessage[]> => {
+        ): LlmMessage[] => {
             const candidates = slicePathUntil(path, stopAtMessageUuid);
             const lastCandidate = candidates[candidates.length - 1];
             const trimmedCandidates =
                 stopAtMessageUuid &&
-                lastCandidate &&
-                lastCandidate.messageUuid === stopAtMessageUuid
+                lastCandidate?.messageUuid === stopAtMessageUuid
                     ? candidates.slice(0, -1)
                     : candidates;
 
-            const safetyMargin = 256;
-            let budget =
+            const inputBudget =
                 contextSize -
                 (maxTokensCount ?? DEFAULT_GENERATION_MAX_TOKENS) -
-                safetyMargin;
-            budget -= approxTokens(buildChatSystemPrompt(systemPrompt));
-            budget -= approxTokens(promptText);
+                256;
+            const budget =
+                inputBudget -
+                approxTokens(buildChatSystemPrompt(systemPrompt)) -
+                approxTokens(promptText);
 
             if (budget <= 0) return [];
 
-            const selected: LlmMessage[] = [];
-            let used = 0;
-
-            for (let idx = trimmedCandidates.length - 1; idx >= 0; idx -= 1) {
-                const message = trimmedCandidates[idx];
-                if (!message) continue;
+            const messages = trimmedCandidates.map((message): LlmMessage => {
                 const isUser = message.sender === "self";
                 let text = isUser
                     ? message.text
@@ -2431,28 +2204,36 @@ const Page: React.FC = () => {
                     }
                 }
 
-                const cost = approxTokens(text);
+                return { role: isUser ? "user" : "assistant", content: text };
+            });
 
-                if (used + cost > budget) {
-                    if (selected.length === 0 && budget > 0) {
-                        const charBudget = Math.max(1, budget * 4);
-                        const truncated = text.slice(-charBudget);
-                        selected.push({
-                            role: isUser ? "user" : "assistant",
-                            content: truncated,
-                        });
-                    }
-                    break;
-                }
-
-                selected.push({
-                    role: isUser ? "user" : "assistant",
-                    content: text,
-                });
-                used += cost;
+            const historyTokens = messages.reduce(
+                (total, message) => total + approxTokens(message.content),
+                0,
+            );
+            const quantum = Math.max(1, Math.floor(inputBudget / 4));
+            const overflow = Math.max(0, historyTokens - budget);
+            const discardTarget = Math.ceil(overflow / quantum) * quantum;
+            let discarded = 0;
+            let startIndex = 0;
+            while (startIndex < messages.length && discarded < discardTarget) {
+                discarded += approxTokens(messages[startIndex]!.content);
+                startIndex += 1;
             }
 
-            return selected.reverse();
+            const selected = messages.slice(startIndex);
+            if (selected.length === 0 && messages.length > 0) {
+                const last = messages[messages.length - 1]!;
+                if (approxTokens(last.content) <= budget) return [last];
+                return [
+                    {
+                        ...last,
+                        content: last.content.slice(-Math.max(1, budget * 4)),
+                    },
+                ];
+            }
+
+            return selected;
         },
         [approxTokens, slicePathUntil, stripHiddenParts, systemPrompt],
     );
@@ -2493,6 +2274,7 @@ const Page: React.FC = () => {
 
     const removeSessionFromState = useCallback(
         (sessionId: string) => {
+            manuallyRenamedSessionIdsRef.current.delete(sessionId);
             setSessions((prev) =>
                 prev.filter((session) => session.sessionUuid !== sessionId),
             );
@@ -2517,8 +2299,6 @@ const Page: React.FC = () => {
 
             if (currentSessionIdRef.current === sessionId) {
                 generationTokenRef.current += 1;
-                pendingCancelRef.current = false;
-                stopRequestedRef.current = false;
 
                 const jobId = currentJobIdRef.current;
                 currentJobIdRef.current = null;
@@ -2536,9 +2316,8 @@ const Page: React.FC = () => {
                 lastGenerationRef.current = null;
             }
 
-            await deleteSession(sessionId, chatKey);
+            await deleteSession(sessionId);
             removeSessionFromState(sessionId);
-            void syncChat(chatKey);
         },
         [chatKey, removeSessionFromState],
     );
@@ -2547,11 +2326,63 @@ const Page: React.FC = () => {
         setDeleteSessionId(sessionId);
     }, []);
 
+    const requestRenameSession = useCallback((session: ChatSession) => {
+        if (pendingSessionRenamesRef.current.has(session.sessionUuid)) return;
+        setRenameSessionId(session.sessionUuid);
+        setRenameSessionTitle(session.title.trim() || "New chat");
+    }, []);
+
+    const handleCancelRenameSession = useCallback(() => {
+        setRenameSessionId(null);
+        setRenameSessionTitle("");
+    }, []);
+
+    const handleConfirmRenameSession = useCallback(async () => {
+        if (!chatKey || !renameSessionId || !renameSessionTitle.trim()) return;
+        if (pendingSessionRenamesRef.current.has(renameSessionId)) return;
+        const title = sessionTitleFromText(renameSessionTitle);
+        const currentTitle = sessions.find(
+            (session) => session.sessionUuid === renameSessionId,
+        )?.title;
+        if (!currentTitle || title === currentTitle) {
+            handleCancelRenameSession();
+            return;
+        }
+        pendingSessionRenamesRef.current.add(renameSessionId);
+        const wasManuallyRenamed =
+            manuallyRenamedSessionIdsRef.current.has(renameSessionId);
+        manuallyRenamedSessionIdsRef.current.add(renameSessionId);
+        handleCancelRenameSession();
+        try {
+            await persistSessionTitle(renameSessionId, title, chatKey);
+        } catch (error) {
+            if (!wasManuallyRenamed) {
+                manuallyRenamedSessionIdsRef.current.delete(renameSessionId);
+            }
+            onGenericError(error);
+        } finally {
+            pendingSessionRenamesRef.current.delete(renameSessionId);
+        }
+    }, [
+        chatKey,
+        handleCancelRenameSession,
+        onGenericError,
+        persistSessionTitle,
+        renameSessionId,
+        renameSessionTitle,
+        sessions,
+    ]);
+
     const handleConfirmDeleteSession = useCallback(async () => {
         if (!deleteSessionId) return;
-        await handleDeleteSession(deleteSessionId);
-        setDeleteSessionId(null);
-    }, [deleteSessionId, handleDeleteSession]);
+        try {
+            await handleDeleteSession(deleteSessionId);
+        } catch (error) {
+            onGenericError(error);
+        } finally {
+            setDeleteSessionId(null);
+        }
+    }, [deleteSessionId, handleDeleteSession, onGenericError]);
 
     const handleCancelDeleteSession = useCallback(() => {
         setDeleteSessionId(null);
@@ -2586,14 +2417,13 @@ const Page: React.FC = () => {
             try {
                 const images = await Promise.all(
                     imageAttachments.map(async (attachment) => {
-                        await downloadAttachment(attachment.id);
                         const bytes = await readDecryptedAttachmentBytes(
                             attachment.id,
                             chatKey,
                             message.sessionUuid,
                         );
                         const name =
-                            attachment.name?.trim() || `image-${attachment.id}`;
+                            attachment.name.trim() || `image-${attachment.id}`;
                         const file = new File([toSafeBlobPart(bytes)], name, {
                             type: inferImageMime(name),
                         });
@@ -2661,7 +2491,6 @@ const Page: React.FC = () => {
             if (!chatKey) return;
 
             try {
-                await downloadAttachment(attachment.id);
                 const bytes = await readDecryptedAttachmentBytes(
                     attachment.id,
                     chatKey,
@@ -2669,7 +2498,7 @@ const Page: React.FC = () => {
                 );
 
                 const baseName =
-                    attachment.name?.trim() || `attachment-${attachment.id}`;
+                    attachment.name.trim() || `attachment-${attachment.id}`;
                 const treatAsImage = attachment.kind === "image";
                 const filename = treatAsImage
                     ? baseName
@@ -2713,16 +2542,13 @@ const Page: React.FC = () => {
                     return;
                 }
 
-                if (!treatAsImage) {
-                    const text = new TextDecoder().decode(bytes);
-                    const blob = new Blob([text], {
-                        type: "text/plain;charset=utf-8",
-                    });
-                    const url = URL.createObjectURL(blob);
-                    window.open(url, "_blank", "noopener");
-                    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-                    return;
-                }
+                const text = new TextDecoder().decode(bytes);
+                const blob = new Blob([text], {
+                    type: "text/plain;charset=utf-8",
+                });
+                const url = URL.createObjectURL(blob);
+                window.open(url, "_blank", "noopener");
+                window.setTimeout(() => URL.revokeObjectURL(url), 1000);
             } catch (error) {
                 log.error("Failed to open attachment", error);
                 showMiniDialog({
@@ -2766,12 +2592,10 @@ const Page: React.FC = () => {
 
     const handleStopGeneration = useCallback(() => {
         const jobId = currentJobIdRef.current;
-        pendingCancelRef.current = true;
-        stopRequestedRef.current = true;
         generationTokenRef.current += 1;
 
         flushStreamingText();
-        const finalText = streamingBufferRef.current.replace(/\u0000/g, "");
+        const finalText = streamingBufferRef.current.replaceAll("\0", "");
         const trimmedText = finalText.trim();
         const parentMessageUuid = streamingParentId;
         const activeSessionId = currentSessionIdRef.current ?? currentSessionId;
@@ -2808,7 +2632,6 @@ const Page: React.FC = () => {
                     );
                     appendMessageToState(assistantMessage);
                     updateSessionAfterMessage(assistantMessage);
-                    void syncChat(chatKey);
                     void maybeGenerateSessionTitle({
                         sessionUuid: activeSessionId,
                         assistantMessageUuid: assistantMessage.messageUuid,
@@ -2886,11 +2709,6 @@ const Page: React.FC = () => {
                 sessionUuid ?? currentSessionIdRef.current ?? currentSessionId;
             if (!chatKey || !activeSessionId) return;
 
-            if (pendingCancelRef.current) {
-                pendingCancelRef.current = false;
-            }
-            stopRequestedRef.current = false;
-
             const generationToken = generationTokenRef.current + 1;
             generationTokenRef.current = generationToken;
 
@@ -2941,16 +2759,16 @@ const Page: React.FC = () => {
 
                 if (resetContext) {
                     await provider.resetContext(contextSize);
+                    if (!isActiveGeneration()) return;
                 }
 
-                const history =
-                    (await buildHistory(
-                        historyPath,
-                        promptText,
-                        contextSize,
-                        maxTokens,
-                        stopAtMessageUuid,
-                    )) ?? [];
+                const history = buildHistory(
+                    historyPath,
+                    promptText,
+                    contextSize,
+                    maxTokens,
+                    stopAtMessageUuid,
+                );
 
                 const messages: LlmMessage[] = [
                     {
@@ -2972,73 +2790,55 @@ const Page: React.FC = () => {
                     );
                 }
 
-                if (pendingCancelRef.current || stopRequestedRef.current) {
-                    pendingCancelRef.current = false;
-                    stopRequestedRef.current = false;
-                    provider.cancelGeneration(-1);
-                    if (previousSelection) {
-                        void updateBranchSelectionState(
-                            parentMessageUuid,
-                            previousSelection,
-                        );
-                    }
-                    setIsGenerating(false);
-                    setIsStreamingOutro(false);
-                    setIsDownloading(false);
-                    setStreamingParentId(null);
-                    streamingBufferRef.current = "";
-                    streamingChunksRef.current = [];
-                    streamingCreatedAtRef.current = null;
-                    setStreamingText("");
-                    currentJobIdRef.current = null;
-                    return;
-                }
-
-                const hasImages =
-                    (imagePaths?.length ?? 0) > 0 &&
-                    provider.getBackendKind() === "tauri";
-                const mmprojPath = hasImages
+                const nativeImagePaths =
+                    imagePaths?.length && provider.getBackendKind() === "tauri"
+                        ? imagePaths
+                        : undefined;
+                const mmprojPath = nativeImagePaths
                     ? provider.getCurrentMmprojPath()
                     : undefined;
-                if (hasImages && !mmprojPath) {
+                if (nativeImagePaths && !mmprojPath) {
                     throw new Error("MMProj model not available");
                 }
 
-                await provider.generateChatStream(
-                    {
-                        messages,
-                        imagePaths: hasImages ? imagePaths : undefined,
-                        mmprojPath,
-                        mediaMarker: hasImages
-                            ? (mediaMarker ?? MEDIA_MARKER)
-                            : undefined,
-                        maxTokens,
-                        temperature: 0.7,
-                        topP: 0.9,
-                        repeatPenalty: REPEAT_PENALTY,
-                    },
-                    (event: GenerateEvent) => {
-                        if (!isActiveGeneration()) {
-                            return;
-                        }
-                        if (event.type === "text") {
-                            if (!currentJobIdRef.current) {
-                                currentJobIdRef.current = event.job_id;
-                                if (pendingCancelRef.current) {
-                                    pendingCancelRef.current = false;
-                                    provider.cancelGeneration(event.job_id);
-                                    return;
-                                }
+                try {
+                    await provider.generateChatStream(
+                        {
+                            messages,
+                            imagePaths: nativeImagePaths,
+                            mmprojPath,
+                            mediaMarker: nativeImagePaths
+                                ? (mediaMarker ?? MEDIA_MARKER)
+                                : undefined,
+                            maxTokens,
+                            temperature: 0.7,
+                            topP: 0.9,
+                            repeatPenalty: REPEAT_PENALTY,
+                        },
+                        (event: GenerateEvent) => {
+                            if (!isActiveGeneration()) {
+                                const jobId =
+                                    event.type === "text"
+                                        ? event.job_id
+                                        : event.summary.job_id;
+                                provider.cancelGeneration(jobId);
+                                return;
                             }
-                            streamingChunksRef.current.push(event.text);
-                            scheduleStreamingFlush();
-                        } else if (event.type === "error") {
-                            errorMessage = event.message;
-                        } else if (event.type === "done") {
-                            currentJobIdRef.current = event.summary.job_id;
-                        }
-                    },
-                );
+                            if (event.type === "text") {
+                                if (!currentJobIdRef.current) {
+                                    currentJobIdRef.current = event.job_id;
+                                }
+                                streamingChunksRef.current.push(event.text);
+                                scheduleStreamingFlush();
+                            } else {
+                                currentJobIdRef.current = event.summary.job_id;
+                            }
+                        },
+                    );
+                } catch (error) {
+                    errorMessage =
+                        error instanceof Error ? error.message : String(error);
+                }
 
                 if (!isActiveGeneration()) {
                     return;
@@ -3063,7 +2863,7 @@ const Page: React.FC = () => {
                     return;
                 }
 
-                const assistantText = finalText.replace(/\u0000/g, "");
+                const assistantText = finalText.replaceAll("\0", "");
                 setIsStreamingOutro(true);
 
                 await new Promise<void>((resolve) => {
@@ -3089,7 +2889,6 @@ const Page: React.FC = () => {
                 appendMessageToState(assistantMessage);
                 updateSessionAfterMessage(assistantMessage);
 
-                void syncChat(chatKey);
                 void maybeGenerateSessionTitle({
                     sessionUuid: activeSessionId,
                     assistantMessageUuid: assistantMessage.messageUuid,
@@ -3108,19 +2907,17 @@ const Page: React.FC = () => {
                     );
                 }
             } finally {
-                if (!isActiveGeneration()) {
-                    return;
+                if (isActiveGeneration()) {
+                    setIsGenerating(false);
+                    setIsStreamingOutro(false);
+                    setIsDownloading(false);
+                    streamingBufferRef.current = "";
+                    streamingChunksRef.current = [];
+                    setStreamingText("");
+                    setStreamingParentId(null);
+                    streamingCreatedAtRef.current = null;
+                    currentJobIdRef.current = null;
                 }
-                setIsGenerating(false);
-                setIsStreamingOutro(false);
-                setIsDownloading(false);
-                streamingBufferRef.current = "";
-                streamingChunksRef.current = [];
-                setStreamingText("");
-                setStreamingParentId(null);
-                streamingCreatedAtRef.current = null;
-                currentJobIdRef.current = null;
-                pendingCancelRef.current = false;
             }
         },
         [
@@ -3186,7 +2983,7 @@ const Page: React.FC = () => {
                 historyPath,
                 stopAtMessageUuid: parentUuid,
                 resetContext: true,
-                sessionUuid: currentSessionId ?? undefined,
+                sessionUuid: currentSessionId,
             });
         },
         [
@@ -3204,7 +3001,7 @@ const Page: React.FC = () => {
 
     const handlePrevBranch = useCallback(
         (switcher: BranchSwitcher) => {
-            if (!switcher || switcher.total <= 1) return;
+            if (switcher.total <= 1) return;
             const nextIndex =
                 (switcher.currentIndex - 1 + switcher.total) % switcher.total;
             const target = switcher.targets[nextIndex];
@@ -3216,7 +3013,7 @@ const Page: React.FC = () => {
 
     const handleNextBranch = useCallback(
         (switcher: BranchSwitcher) => {
-            if (!switcher || switcher.total <= 1) return;
+            if (switcher.total <= 1) return;
             const nextIndex = (switcher.currentIndex + 1) % switcher.total;
             const target = switcher.targets[nextIndex];
             if (!target) return;
@@ -3397,8 +3194,6 @@ const Page: React.FC = () => {
         }, 1800);
     }, [advancedUnlocked]);
 
-    // Hardcoded fallbacks used when Rust defaults are not available (web-only
-    // mode). These must stay in sync with rust/crates/ensu/inference/src/defaults.rs.
     const fallbackSuggestedModels = useMemo(
         () =>
             isTauriRuntime
@@ -3410,40 +3205,25 @@ const Page: React.FC = () => {
 
     const handleSaveModel = useCallback(
         (draft: {
-            useCustomModel: boolean;
-            modelUrl: string;
-            mmprojUrl: string;
+            modelId: string;
             contextLength: string;
             maxTokens: string;
         }) => {
             setIsSavingModel(true);
-            const payload = {
-                useCustomModel: draft.useCustomModel,
-                modelUrl: draft.useCustomModel ? draft.modelUrl : "",
-                mmprojUrl:
-                    draft.useCustomModel && isTauriRuntime
-                        ? draft.mmprojUrl
-                        : "",
-                contextLength: draft.contextLength,
-                maxTokens: draft.maxTokens,
-            };
             if (typeof window !== "undefined") {
                 window.localStorage.setItem(
                     MODEL_SETTINGS_STORAGE_KEY,
-                    JSON.stringify(payload),
+                    JSON.stringify(draft),
                 );
-                void setKV(MODEL_SETTINGS_STORAGE_KEY, payload);
             }
-            setUseCustomModel(draft.useCustomModel);
-            setModelUrl(draft.modelUrl);
-            setMmprojUrl(draft.mmprojUrl);
+            setSelectedModelId(draft.modelId);
             setContextLength(draft.contextLength);
             setMaxTokens(draft.maxTokens);
             setLoadedModelName(null);
             setIsSavingModel(false);
             setShowModelSettings(false);
         },
-        [isTauriRuntime],
+        [],
     );
 
     const handleUseDefaultModel = useCallback(() => {
@@ -3451,18 +3231,13 @@ const Page: React.FC = () => {
             window.localStorage.setItem(
                 MODEL_SETTINGS_STORAGE_KEY,
                 JSON.stringify({
-                    useCustomModel: false,
-                    modelUrl: "",
-                    mmprojUrl: "",
+                    modelId: "",
                     contextLength: "",
                     maxTokens: "",
                 }),
             );
-            void removeKV(MODEL_SETTINGS_STORAGE_KEY);
         }
-        setUseCustomModel(false);
-        setModelUrl("");
-        setMmprojUrl("");
+        setSelectedModelId("");
         setContextLength("");
         setMaxTokens("");
         setLoadedModelName(null);
@@ -3702,9 +3477,8 @@ const Page: React.FC = () => {
         closeAttachmentMenu();
         if (imageAttachmentSlotsRemaining <= 0) return;
         try {
-            const { open: openFileDialog } = await import(
-                "@tauri-apps/plugin-dialog"
-            );
+            const { open: openFileDialog } =
+                await import("@tauri-apps/plugin-dialog");
             const selection = await openFileDialog({
                 directory: false,
                 multiple: true,
@@ -3823,30 +3597,21 @@ const Page: React.FC = () => {
         showMiniDialog,
     ]);
 
-    const openAttachmentMenu = useCallback(
-        (_event: React.MouseEvent<HTMLElement>) => {
-            closeAttachmentMenu();
-            if (showImageAttachment) {
-                if (isImageAttachmentLimitReached) return;
-                if (isTauriRuntime) {
-                    void openTauriImageSelector();
-                } else {
-                    openImageSelector();
-                }
-                return;
-            }
-            openDocumentSelector();
-        },
-        [
-            closeAttachmentMenu,
-            isTauriRuntime,
-            isImageAttachmentLimitReached,
-            openDocumentSelector,
-            openImageSelector,
-            openTauriImageSelector,
-            showImageAttachment,
-        ],
-    );
+    const openAttachmentMenu = useCallback(() => {
+        closeAttachmentMenu();
+        if (showImageAttachment) {
+            if (isImageAttachmentLimitReached) return;
+            void openTauriImageSelector();
+            return;
+        }
+        openDocumentSelector();
+    }, [
+        closeAttachmentMenu,
+        isImageAttachmentLimitReached,
+        openDocumentSelector,
+        openTauriImageSelector,
+        showImageAttachment,
+    ]);
 
     const handleAttachmentChoice = useCallback(
         (choice: "image" | "document") => {
@@ -3873,65 +3638,6 @@ const Page: React.FC = () => {
     const removePendingImage = useCallback((id: string) => {
         setPendingImages((prev) => prev.filter((img) => img.id !== id));
     }, []);
-
-    const handleLogout = useCallback(
-        () =>
-            showMiniDialog({
-                title: "Sign out",
-                message: "Are you sure you want to sign out?",
-                continue: {
-                    text: "Sign out",
-                    color: "critical",
-                    action: logout,
-                },
-                buttonDirection: "row",
-            }),
-        [logout, showMiniDialog],
-    );
-
-    const openLoginFromChat = useCallback(() => {
-        if (!SIGN_IN_ENABLED) {
-            showMiniDialog({
-                title: "Coming Soon",
-                message: (
-                    <Stack
-                        sx={{
-                            gap: 1.25,
-                            alignItems: "center",
-                            textAlign: "center",
-                        }}
-                    >
-                        <Box
-                            component="img"
-                            src={comingSoonDuckySrc}
-                            alt="Ensu ducky"
-                            sx={{ width: 92, height: 92, objectFit: "contain" }}
-                        />
-                        <Box component="span" sx={{ px: 3 }}>
-                            Sign in and cloud backup will be available in a
-                            future update.
-                        </Box>
-                    </Stack>
-                ),
-                cancel: "Got it",
-            });
-            return;
-        }
-        void router.push("/login");
-    }, [comingSoonDuckySrc, router, showMiniDialog]);
-
-    const openPasskeysFromChat = useCallback(async () => {
-        try {
-            await openAccountsManagePasskeysPage();
-        } catch (e) {
-            log.error("Failed to open passkeys page", e);
-            showMiniDialog({
-                title: "Passkeys unavailable",
-                message:
-                    "We could not open the passkeys page. Please try again.",
-            });
-        }
-    }, [showMiniDialog]);
 
     const handleSend = useCallback(async () => {
         const trimmed = input.trim();
@@ -3967,7 +3673,12 @@ const Page: React.FC = () => {
 
         let activeSessionId = currentSessionId;
         if (!activeSessionId) {
-            activeSessionId = await createSession(chatKey);
+            try {
+                activeSessionId = await createSession(chatKey);
+            } catch (error) {
+                onGenericError(error);
+                return;
+            }
             setCurrentSessionId(activeSessionId);
             currentSessionIdRef.current = activeSessionId;
             setIsDraftSession(false);
@@ -3977,10 +3688,30 @@ const Page: React.FC = () => {
         }
 
         const messageText = buildPromptWithDocuments(
-            trimmed.replace(/\u0000/g, ""),
+            trimmed.replaceAll("\0", ""),
             pendingDocuments,
         );
-        let promptText = messageText;
+        const persistedAttachmentIds = new Set(
+            (editingMessage?.attachments ?? []).map(({ id }) => id),
+        );
+        const newAttachmentIds = [
+            ...pendingDocuments.map(({ id }) => id),
+            ...pendingImages.map(({ id }) => id),
+        ].filter((id) => !persistedAttachmentIds.has(id));
+        const cleanupUnstoredAttachments = async () => {
+            await Promise.all(
+                newAttachmentIds.map(async (id) => {
+                    try {
+                        await deleteAttachmentBytes(id);
+                    } catch (error) {
+                        log.warn(
+                            `Failed to clean up attachment payload ${id}`,
+                            error,
+                        );
+                    }
+                }),
+            );
+        };
         let inferenceImagePaths: string[] = [];
 
         let attachments: ChatAttachment[] = [];
@@ -4033,6 +3764,7 @@ const Page: React.FC = () => {
                 );
                 attachments = [...documentAttachments, ...imageAttachments];
             } catch (error) {
+                await cleanupUnstoredAttachments();
                 log.error("Failed to store attachments", error);
                 showMiniDialog({
                     title: "Attachment error",
@@ -4046,6 +3778,7 @@ const Page: React.FC = () => {
             try {
                 inferenceImagePaths = await writeInferenceImages(pendingImages);
             } catch (error) {
+                await cleanupUnstoredAttachments();
                 log.error("Failed to prepare images for inference", error);
                 showMiniDialog({
                     title: "Attachment error",
@@ -4056,13 +3789,14 @@ const Page: React.FC = () => {
             }
         }
 
-        promptText = buildPromptWithImages(
+        const promptText = buildPromptWithImages(
             messageText,
             inferenceImagePaths.length,
         );
 
         setInput("");
 
+        let messageStored = false;
         try {
             if (editingMessage) {
                 const parentUuid = editingMessage.parentMessageUuid;
@@ -4079,6 +3813,7 @@ const Page: React.FC = () => {
                     parentUuid,
                     attachments,
                 );
+                messageStored = true;
 
                 void updateBranchSelectionState(
                     selectionKey,
@@ -4089,8 +3824,6 @@ const Page: React.FC = () => {
                 setEditingMessage(null);
                 setPendingDocuments([]);
                 setPendingImages([]);
-
-                void syncChat(chatKey);
 
                 await startGeneration({
                     promptText,
@@ -4116,6 +3849,7 @@ const Page: React.FC = () => {
                 parentUuid,
                 attachments,
             );
+            messageStored = true;
 
             void updateBranchSelectionState(
                 selectionKey,
@@ -4126,8 +3860,6 @@ const Page: React.FC = () => {
             setPendingDocuments([]);
             setPendingImages([]);
 
-            void syncChat(chatKey);
-
             await startGeneration({
                 promptText,
                 parentMessageUuid: userMessage.messageUuid,
@@ -4137,6 +3869,7 @@ const Page: React.FC = () => {
                 mediaMarker: MEDIA_MARKER,
             });
         } catch (error) {
+            if (!messageStored) await cleanupUnstoredAttachments();
             log.error("Failed to store chat message", error);
         } finally {
             await cleanupInferenceImages(inferenceImagePaths);
@@ -4152,6 +3885,7 @@ const Page: React.FC = () => {
         pendingDocuments,
         pendingImages,
         showMiniDialog,
+        onGenericError,
         slicePathUntil,
         startGeneration,
         writeInferenceImages,
@@ -4196,13 +3930,13 @@ const Page: React.FC = () => {
             groupedSessions={groupedSessions}
             currentSessionId={currentSessionId}
             handleSelectSession={handleSelectSession}
+            requestRenameSession={requestRenameSession}
             requestDeleteSession={requestDeleteSession}
-            isLoggedIn={isLoggedIn}
             openSettingsModal={openSettingsModal}
         />
     );
 
-    if (loading) return <></>;
+    if (loading || !modelSettingsLoaded) return <></>;
 
     return (
         <>
@@ -4336,22 +4070,6 @@ const Page: React.FC = () => {
                                 </Box>
                             </Stack>
                         </Stack>
-                        {!isLoggedIn && (
-                            <Button
-                                onClick={openLoginFromChat}
-                                color="inherit"
-                                variant="text"
-                                sx={{
-                                    textTransform: "none",
-                                    fontWeight: 600,
-                                    fontSize: "13px",
-                                    color: "text.base",
-                                    py: 0.75,
-                                }}
-                            >
-                                Sign In
-                            </Button>
-                        )}
                     </NavbarBase>
 
                     <ChatMessageList
@@ -4412,7 +4130,7 @@ const Page: React.FC = () => {
                         isGenerating={isGenerating}
                         handleSend={handleSend}
                         handleStopGeneration={handleStopGeneration}
-                        showAttachmentPicker={showAttachmentPicker}
+                        showAttachmentPicker={isTauriRuntime}
                         openAttachmentMenu={openAttachmentMenu}
                         attachmentAnchor={attachmentAnchor}
                         closeAttachmentMenu={closeAttachmentMenu}
@@ -4486,34 +4204,29 @@ const Page: React.FC = () => {
                 settingsItemSx={settingsItemSx}
                 smallIconProps={smallIconProps}
                 compactIconProps={compactIconProps}
-                isLoggedIn={isLoggedIn}
-                signedInEmail={savedLocalUser()?.email ?? ""}
                 saveLogs={saveLogs}
                 handleCheckForUpdates={handleCheckForUpdates}
-                handleLogout={handleLogout}
-                openLoginFromChat={openLoginFromChat}
-                openPasskeysFromChat={openPasskeysFromChat}
                 advancedUnlocked={advancedUnlocked}
                 buildVersion={buildVersion}
                 handleBuildVersionTap={handleBuildVersionTap}
                 openModelSettings={openModelSettings}
                 openSystemPromptSettings={openSystemPromptSettings}
                 isSmall={isSmall}
+                renameSessionId={renameSessionId}
+                renameSessionTitle={renameSessionTitle}
+                setRenameSessionTitle={setRenameSessionTitle}
+                handleCancelRenameSession={handleCancelRenameSession}
+                handleConfirmRenameSession={handleConfirmRenameSession}
                 deleteSessionId={deleteSessionId}
                 deleteSessionLabel={deleteSessionLabel}
                 handleCancelDeleteSession={handleCancelDeleteSession}
                 handleConfirmDeleteSession={handleConfirmDeleteSession}
                 showModelSettings={showModelSettings}
                 closeModelSettings={closeModelSettings}
-                useCustomModel={useCustomModel}
+                selectedModelId={selectedModelId}
                 defaultModelName={resolvedDefaultModel.name}
-                defaultModelUrl={resolvedDefaultModel.url}
-                defaultModelMmproj={resolvedDefaultModel.mmprojUrl}
                 loadedModelName={loadedModelName}
-                allowMmproj={allowMmproj}
                 isTauriRuntime={isTauriRuntime}
-                modelUrl={modelUrl}
-                mmprojUrl={mmprojUrl}
                 suggestedModels={suggestedModels}
                 contextLength={contextLength}
                 maxTokens={maxTokens}
@@ -4525,9 +4238,9 @@ const Page: React.FC = () => {
                 systemPrompt={systemPrompt}
                 handleSaveSystemPrompt={handleSaveSystemPrompt}
                 handleUseDefaultSystemPrompt={handleUseDefaultSystemPrompt}
-                syncNotificationOpen={syncNotificationOpen}
-                setSyncNotificationOpen={setSyncNotificationOpen}
-                syncNotification={syncNotification}
+                chatNotificationOpen={chatNotificationOpen}
+                setChatNotificationOpen={setChatNotificationOpen}
+                chatNotification={chatNotification}
                 modelGateStatus={modelGateStatus}
                 imagePreview={imagePreview}
                 closeImagePreview={closeImagePreview}

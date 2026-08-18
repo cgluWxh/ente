@@ -1,8 +1,7 @@
 name: local_auth_linux
 description: Linux implementation of the local_auth plugin for Ente.
-version: 0.1.0
-publish_to: none
 
+resolution: workspace
 environment:
   sdk: ">=3.10.0 <4.0.0"
   flutter: ">=3.32.0"
@@ -21,6 +20,6 @@ dependencies:
   local_auth_platform_interface: 1.1.0
 
 dev_dependencies:
-  flutter_lints: 5.0.0
+  flutter_lints: 6.0.0
   flutter_test:
     sdk: flutter

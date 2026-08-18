@@ -1,8 +1,8 @@
 import 'package:email_validator/email_validator.dart';
 import 'package:ente_components/ente_components.dart';
+import "package:ente_strings/ente_strings.dart";
 import 'package:flutter/material.dart';
 import 'package:hugeicons/hugeicons.dart';
-import "package:photos/generated/l10n.dart";
 import "package:photos/models/api/collection/user.dart";
 import 'package:photos/models/collection/collection.dart';
 import "package:photos/services/account/user_service.dart";
@@ -17,7 +17,6 @@ import "package:photos/ui/sharing/verify_identity_dialog.dart";
 enum ActionTypesToShow { addViewer, addCollaborator, addAdmin }
 
 class AddParticipantPage extends StatefulWidget {
-  /// Cannot be empty
   final List<ActionTypesToShow> actionTypesToShow;
   final List<Collection> collections;
 
@@ -34,9 +33,8 @@ class _AddParticipantPage extends State<AddParticipantPage> {
   bool _emailIsValid = false;
   bool isKeypadOpen = false;
   late CollectionActions collectionActions;
-  late List<User> _suggestedUsers;
+  late List<UserSuggestion> _suggestedUsers;
 
-  // Focus nodes are necessary
   final textFieldFocusNode = FocusNode();
   final _textController = TextEditingController();
 
@@ -58,7 +56,7 @@ class _AddParticipantPage extends State<AddParticipantPage> {
   Widget build(BuildContext context) {
     final filterSuggestedUsers = _suggestedUsers
         .where(
-          (element) => _matchesUserQuery(
+          (element) => matchesResolvedSuggestionQuery(
             element,
             _textController.text.trim().toLowerCase(),
           ),
@@ -75,13 +73,11 @@ class _AddParticipantPage extends State<AddParticipantPage> {
     );
   }
 
-  List<Widget> _slivers(List<User> filterSuggestedUsers) {
+  List<Widget> _slivers(List<UserSuggestion> filterSuggestedUsers) {
     final footerDescriptions = [
       if (filterSuggestedUsers.isNotEmpty)
         ShareSectionDescription(
-          AppLocalizations.of(
-            context,
-          ).longPressAnEmailToVerifyEndToEndEncryption,
+          context.strings.longPressAnEmailToVerifyEndToEndEncryption,
         ),
       ..._roleDescriptionWidgets(),
     ];
@@ -94,13 +90,11 @@ class _AddParticipantPage extends State<AddParticipantPage> {
           padding: const EdgeInsets.symmetric(horizontal: Spacing.lg),
           sliver: SliverList.list(
             children: [
-              ShareSectionTitle(AppLocalizations.of(context).addANewEmail),
+              ShareSectionTitle(context.strings.addANewEmail),
               _enterEmailField(),
               if (filterSuggestedUsers.isNotEmpty) ...[
                 const SizedBox(height: Spacing.xxl),
-                ShareSectionTitle(
-                  AppLocalizations.of(context).orPickAnExistingOne,
-                ),
+                ShareSectionTitle(context.strings.orPickAnExistingOne),
               ],
             ],
           ),
@@ -175,18 +169,16 @@ class _AddParticipantPage extends State<AddParticipantPage> {
     return [
       if (widget.actionTypesToShow.contains(ActionTypesToShow.addCollaborator))
         ShareSectionDescription(
-          AppLocalizations.of(
-            context,
-          ).collaboratorsCanAddPhotosAndVideosToTheSharedAlbum,
+          context.strings.collaboratorsCanAddPhotosAndVideosToTheSharedAlbum,
         ),
       if (widget.actionTypesToShow.contains(ActionTypesToShow.addAdmin))
         ShareSectionDescription(
-          AppLocalizations.of(context).adminsCanManagePhotosAndParticipants,
+          context.strings.adminsCanManagePhotosAndParticipants,
         ),
     ];
   }
 
-  Widget _suggestedUserItem(List<User> users, int index) {
+  Widget _suggestedUserItem(List<UserSuggestion> users, int index) {
     final currentUser = users[index];
     final borderRadius = MenuGroupComponent.itemBorderRadius(
       index: index,
@@ -202,11 +194,14 @@ class _AddParticipantPage extends State<AddParticipantPage> {
         ),
         child: ShareMenuItem(
           key: ValueKey(
-            '${currentUser.email}-${resolveDisplayName(currentUser)}',
+            '${currentUser.email}-${resolveSuggestionDisplayName(currentUser)}',
           ),
-          title: resolveDisplayName(currentUser),
+          title: resolveSuggestionDisplayName(currentUser),
           titleColor: context.componentColors.textLight,
-          leading: UserAvatarWidget(currentUser, type: AvatarType.medium),
+          leading: UserAvatarWidget.suggestion(
+            currentUser,
+            type: AvatarType.medium,
+          ),
           trailing: _selectedEmails.contains(currentUser.email)
               ? shareCheck(context)
               : null,
@@ -219,16 +214,11 @@ class _AddParticipantPage extends State<AddParticipantPage> {
             }
             setState(() => {});
           },
-          onLongPress: () {
-            showDialog(
-              useRootNavigator: false,
-              context: context,
-              builder: (BuildContext context) {
-                return VerifyIdentifyDialog(
-                  self: false,
-                  email: currentUser.email,
-                );
-              },
+          onLongPress: () async {
+            await showVerifyIdentitySheet(
+              context,
+              self: false,
+              email: currentUser.email,
             );
           },
         ),
@@ -253,9 +243,9 @@ class _AddParticipantPage extends State<AddParticipantPage> {
               ? ButtonComponentVariant.neutral
               : ButtonComponentVariant.primary,
           size: ButtonComponentSize.large,
-          label: AppLocalizations.of(
-            context,
-          ).addCollaborators(count: _selectedEmails.length),
+          label: context.strings.addCollaborators(
+            count: _selectedEmails.length,
+          ),
           isDisabled: _selectedEmails.isEmpty,
           onTap: () async {
             final results = <bool>[];
@@ -275,11 +265,12 @@ class _AddParticipantPage extends State<AddParticipantPage> {
             }
 
             final noOfSuccessfullAdds = results.where((e) => e).length;
+            if (!mounted) return;
             showToast(
               context,
-              AppLocalizations.of(
-                context,
-              ).collaboratorsSuccessfullyAdded(count: noOfSuccessfullAdds),
+              context.strings.collaboratorsSuccessfullyAdded(
+                count: noOfSuccessfullAdds,
+              ),
             );
 
             if (!results.any((e) => e == false) && mounted) {
@@ -294,9 +285,7 @@ class _AddParticipantPage extends State<AddParticipantPage> {
         ButtonComponent(
           variant: ButtonComponentVariant.primary,
           size: ButtonComponentSize.large,
-          label: AppLocalizations.of(
-            context,
-          ).addViewers(count: _selectedEmails.length),
+          label: context.strings.addViewers(count: _selectedEmails.length),
           isDisabled: _selectedEmails.isEmpty,
           onTap: () async {
             final results = <bool>[];
@@ -316,11 +305,12 @@ class _AddParticipantPage extends State<AddParticipantPage> {
             }
 
             final noOfSuccessfullAdds = results.where((e) => e).length;
+            if (!mounted) return;
             showToast(
               context,
-              AppLocalizations.of(
-                context,
-              ).viewersSuccessfullyAdded(count: noOfSuccessfullAdds),
+              context.strings.viewersSuccessfullyAdded(
+                count: noOfSuccessfullAdds,
+              ),
             );
 
             if (!results.any((e) => e == false) && mounted) {
@@ -337,9 +327,7 @@ class _AddParticipantPage extends State<AddParticipantPage> {
               ? ButtonComponentVariant.primary
               : ButtonComponentVariant.neutral,
           size: ButtonComponentSize.large,
-          label: AppLocalizations.of(
-            context,
-          ).addAdmins(count: _selectedEmails.length),
+          label: context.strings.addAdmins(count: _selectedEmails.length),
           isDisabled: _selectedEmails.isEmpty,
           onTap: () async {
             final results = <bool>[];
@@ -359,11 +347,10 @@ class _AddParticipantPage extends State<AddParticipantPage> {
             }
 
             final successful = results.where((e) => e).length;
+            if (!mounted) return;
             showToast(
               context,
-              AppLocalizations.of(
-                context,
-              ).adminsSuccessfullyAdded(count: successful),
+              context.strings.adminsSuccessfullyAdded(count: successful),
             );
 
             if (!results.any((e) => e == false) && mounted) {
@@ -395,7 +382,7 @@ class _AddParticipantPage extends State<AddParticipantPage> {
           child: TextInputComponent(
             controller: _textController,
             focusNode: textFieldFocusNode,
-            hintText: AppLocalizations.of(context).enterAnEmailAddress,
+            hintText: context.strings.enterAnEmailAddress,
             isClearable: true,
             shouldUnfocusOnClearOrSubmit: true,
             autofillHints: const [AutofillHints.email],
@@ -411,7 +398,7 @@ class _AddParticipantPage extends State<AddParticipantPage> {
         const SizedBox(width: Spacing.sm),
         IconButtonComponent(
           variant: IconButtonComponentVariant.green,
-          tooltip: AppLocalizations.of(context).add,
+          tooltip: context.strings.add,
           icon: const HugeIcon(icon: HugeIcons.strokeRoundedMailAdd01),
           onTap: _emailIsValid ? _addNewEmail : null,
         ),
@@ -438,7 +425,7 @@ class _AddParticipantPage extends State<AddParticipantPage> {
             return;
           }
         }
-        _suggestedUsers.insert(0, User(email: _newEmail));
+        _suggestedUsers.insert(0, UserSuggestion(_newEmail));
         _selectedEmails.add(_newEmail);
         _clearEmailField();
         textFieldFocusNode.unfocus();
@@ -446,7 +433,7 @@ class _AddParticipantPage extends State<AddParticipantPage> {
     }
   }
 
-  List<User> _getSuggestedUser() {
+  List<UserSuggestion> _getSuggestedUser() {
     final Set<String> existingEmails = {};
     final collections = widget.collections;
     if (collections.isEmpty) {
@@ -456,7 +443,7 @@ class _AddParticipantPage extends State<AddParticipantPage> {
 
     for (final Collection collection in collections) {
       for (final User u in collection.sharees) {
-        if (u.id != null && u.email.isNotEmpty) {
+        if (u.email.isNotEmpty) {
           existingEmails.add(u.email);
         }
       }
@@ -467,12 +454,12 @@ class _AddParticipantPage extends State<AddParticipantPage> {
       }
     }
 
-    final List<User> suggestedUsers = UserService.instance.getRelevantContacts()
+    final suggestedUsers = UserService.instance.getRelevantContacts()
       ..removeWhere((element) => existingEmails.contains(element.email));
 
     if (_textController.text.trim().isNotEmpty) {
       suggestedUsers.removeWhere(
-        (element) => !_matchesUserQuery(
+        (element) => !matchesResolvedSuggestionQuery(
           element,
           _textController.text.trim().toLowerCase(),
         ),
@@ -488,15 +475,15 @@ class _AddParticipantPage extends State<AddParticipantPage> {
 
   String _getTitle() {
     if (widget.actionTypesToShow.length > 1) {
-      return AppLocalizations.of(context).addParticipants;
+      return context.strings.addParticipants;
     }
     switch (widget.actionTypesToShow.first) {
       case ActionTypesToShow.addViewer:
-        return AppLocalizations.of(context).addViewer;
+        return context.strings.addViewer;
       case ActionTypesToShow.addCollaborator:
-        return AppLocalizations.of(context).addCollaborator;
+        return context.strings.addCollaborator;
       case ActionTypesToShow.addAdmin:
-        return AppLocalizations.of(context).addAdmin;
+        return context.strings.addAdmin;
     }
   }
 
@@ -506,25 +493,13 @@ class _AddParticipantPage extends State<AddParticipantPage> {
     }
     switch (widget.actionTypesToShow.first) {
       case ActionTypesToShow.addCollaborator:
-        return AppLocalizations.of(
-          context,
-        ).collaboratorsCanAddPhotosAndVideosToTheSharedAlbum;
+        return context
+            .strings
+            .collaboratorsCanAddPhotosAndVideosToTheSharedAlbum;
       case ActionTypesToShow.addAdmin:
-        return AppLocalizations.of(
-          context,
-        ).adminsCanManagePhotosAndParticipants;
+        return context.strings.adminsCanManagePhotosAndParticipants;
       case ActionTypesToShow.addViewer:
         return null;
     }
-  }
-
-  bool _matchesUserQuery(User user, String lowerCaseQuery) {
-    if (lowerCaseQuery.isEmpty) {
-      return true;
-    }
-    final resolvedName = resolveDisplayName(user).toLowerCase();
-    final resolvedEmail = (resolveKnownEmail(user) ?? user.email).toLowerCase();
-    return resolvedName.contains(lowerCaseQuery) ||
-        resolvedEmail.contains(lowerCaseQuery);
   }
 }

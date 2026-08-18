@@ -1,13 +1,12 @@
 package public
 
 import (
-	"context"
 	"database/sql"
 	"errors"
 	"testing"
 
-	"github.com/ente-io/museum/ente"
-	"github.com/ente-io/museum/internal/testutil"
+	"github.com/ente/museum/ente"
+	"github.com/ente/museum/internal/testutil"
 )
 
 func TestGetFileUrlRowByTokenReturnsActiveRowBeforeDisabledRow(t *testing.T) {
@@ -16,7 +15,7 @@ func TestGetFileUrlRowByTokenReturnsActiveRowBeforeDisabledRow(t *testing.T) {
 	insertFileLinkToken(t, db, "pft_disabled", "reused-token", 1, 11, true)
 	insertFileLinkToken(t, db, "pft_active", "reused-token", 2, 22, false)
 
-	row, err := repository.GetFileUrlRowByToken(context.Background(), "reused-token")
+	row, err := repository.GetFileUrlRowByToken(t.Context(), "reused-token")
 	if err != nil {
 		t.Fatalf("GetFileUrlRowByToken() error = %v", err)
 	}
@@ -30,7 +29,7 @@ func TestGetFileUrlRowByTokenReturnsDisabledRowWhenNoActiveRowExists(t *testing.
 
 	insertFileLinkToken(t, db, "pft_disabled", "disabled-token", 1, 11, true)
 
-	row, err := repository.GetFileUrlRowByToken(context.Background(), "disabled-token")
+	row, err := repository.GetFileUrlRowByToken(t.Context(), "disabled-token")
 	if err != nil {
 		t.Fatalf("GetFileUrlRowByToken() error = %v", err)
 	}
@@ -42,7 +41,7 @@ func TestGetFileUrlRowByTokenReturnsDisabledRowWhenNoActiveRowExists(t *testing.
 func TestGetFileUrlRowByTokenReturnsNotFoundForUnknownToken(t *testing.T) {
 	repository, _ := setupFileLinkRepositoryTest(t)
 
-	_, err := repository.GetFileUrlRowByToken(context.Background(), "missing-token")
+	_, err := repository.GetFileUrlRowByToken(t.Context(), "missing-token")
 	if !errors.Is(err, ente.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}

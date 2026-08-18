@@ -2,16 +2,16 @@ import "dart:async";
 
 import "package:ente_components/ente_components.dart";
 import "package:ente_pure_utils/ente_pure_utils.dart";
+import "package:ente_strings/ente_strings.dart";
 import 'package:flutter/material.dart';
 import "package:logging/logging.dart";
-import "package:photos/generated/l10n.dart";
 import "package:photos/models/backup/backup_item.dart";
 import "package:photos/models/backup/backup_item_status.dart";
+import "package:photos/module/upload/service/file_uploader.dart";
 import 'package:photos/theme/ente_theme.dart';
 import "package:photos/ui/viewer/file/detail_page.dart";
 import "package:photos/ui/viewer/file/thumbnail_widget.dart";
 import "package:photos/utils/email_util.dart";
-import "package:photos/utils/file_uploader.dart";
 
 class BackupItemCard extends StatefulWidget {
   const BackupItemCard({super.key, required this.item});
@@ -32,7 +32,6 @@ class _BackupItemCardState extends State<BackupItemCard> {
     super.initState();
     folderName = widget.item.file.deviceFolder ?? '';
 
-    // Delay rendering of the thumbnail for 0.5 seconds
     Timer(const Duration(milliseconds: 500), () {
       if (mounted) {
         setState(() {
@@ -88,9 +87,7 @@ class _BackupItemCardState extends State<BackupItemCard> {
                         widget.item.file,
                         shouldShowSyncStatus: false,
                       )
-                    : Container(
-                        color: colorScheme.fillFaint, // Placeholder color
-                      ),
+                    : Container(color: colorScheme.fillFaint),
               ),
             ),
             const SizedBox(width: 12),
@@ -142,14 +139,12 @@ class _BackupItemCardState extends State<BackupItemCard> {
                       context: context,
                       isDismissible: true,
                       builder: (_) => BottomSheetComponent(
-                        title: AppLocalizations.of(context).backupFailed,
-                        message: AppLocalizations.of(
-                          context,
-                        ).sorryBackupFailedDesc,
+                        title: context.strings.backupFailed,
+                        message: context.strings.sorryBackupFailedDesc,
                         illustration: Image.asset("assets/warning-grey.png"),
                         actions: [
                           ButtonComponent(
-                            label: AppLocalizations.of(context).contactSupport,
+                            label: context.strings.contactSupport,
                             onTap: () async {
                               _logger.warning(
                                 "Backup failed for ${widget.item.file.displayName}",
@@ -157,7 +152,7 @@ class _BackupItemCardState extends State<BackupItemCard> {
                               );
                               await sendLogs(
                                 context,
-                                AppLocalizations.of(context).contactSupport,
+                                context.strings.contactSupport,
                                 "support@ente.com",
                                 postShare: () {},
                               );
@@ -167,7 +162,7 @@ class _BackupItemCardState extends State<BackupItemCard> {
                             },
                           ),
                           ButtonComponent(
-                            label: AppLocalizations.of(context).ok,
+                            label: context.strings.ok,
                             variant: ButtonComponentVariant.secondary,
                             onTap: () async {
                               Navigator.of(context).pop();
@@ -185,13 +180,9 @@ class _BackupItemCardState extends State<BackupItemCard> {
               width: 48,
               child: Center(
                 child: switch (widget.item.status) {
-                  BackupItemStatus.uploading => SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2.0,
-                      color: colorScheme.primary700,
-                    ),
+                  BackupItemStatus.uploading => _UploadProgressIndicator(
+                    progressPercent: widget.item.progressPercent,
+                    color: colorScheme.primary700,
                   ),
                   BackupItemStatus.uploaded => const SizedBox(
                     width: 24,
@@ -228,6 +219,63 @@ class _BackupItemCardState extends State<BackupItemCard> {
                     ),
                   ),
                 },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _UploadProgressIndicator extends StatelessWidget {
+  const _UploadProgressIndicator({
+    required this.progressPercent,
+    required this.color,
+  });
+
+  static const _finalizingIndicatorValue = 0.995;
+
+  final int? progressPercent;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final percent = progressPercent;
+    if (percent == null) {
+      return SizedBox(
+        width: 16,
+        height: 16,
+        child: CircularProgressIndicator(strokeWidth: 2, color: color),
+      );
+    }
+    return Semantics(
+      value: "$percent%",
+      excludeSemantics: true,
+      child: SizedBox(
+        width: 40,
+        height: 40,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            SizedBox(
+              width: 36,
+              height: 36,
+              child: CircularProgressIndicator(
+                value: percent == 99
+                    ? _finalizingIndicatorValue
+                    : percent / 100,
+                strokeWidth: 2,
+                color: color,
+              ),
+            ),
+            Text(
+              "$percent%",
+              textScaler: TextScaler.noScaling,
+              style: TextStyle(
+                color: color,
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
               ),
             ),
           ],
