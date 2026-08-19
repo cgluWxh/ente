@@ -4,10 +4,9 @@ on:
     push:
         branches:
             - main
-        paths:
-            - ".github/workflows/photos-web-hosting-deploy.yml"
-            - "rust/**"
-            - "web/**"
+    pull_request:
+        branches:
+            - main
     workflow_dispatch:
 
 permissions:
